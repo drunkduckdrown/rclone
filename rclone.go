@@ -10,7 +10,7 @@ import (
 	_ "github.com/rclone/rclone/lib/plugin" // import plugins
 
 	// 新增：在这里强制导入 openlist 后端
-    	_ "github.com/rclone/rclone/backend/openlist"
+    	_ "github.com/drunkduckdrown/rclone/backend/openlist"
 )
 
 func main() {
