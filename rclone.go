@@ -8,6 +8,9 @@ import (
 	"github.com/rclone/rclone/cmd"
 	_ "github.com/rclone/rclone/cmd/all"    // import all commands
 	_ "github.com/rclone/rclone/lib/plugin" // import plugins
+
+	// 新增：在这里强制导入 openlist 后端
+    	_ "github.com/rclone/rclone/backend/openlist"
 )
 
 func main() {
