@@ -1,6 +1,6 @@
 # .github/workflows/build-openlist-support.yml
 
-name: Build rclone for Windows (openlist-support branch)
+name: Build rclone with OpenList support (from fork)
 
 on:
   push:
@@ -13,9 +13,9 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      # 第 1 步：检出代码
-      # 关键：使用 fetch-depth: 0 来获取完整的 git 历史和 tags
-      - name: Checkout source code
+      # 第 1 步：检出你的 fork 仓库的 'openlist-support' 分支
+      # fetch-depth: 0 是正确的，可以获取版本 tag
+      - name: Checkout source code from fork
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
@@ -26,23 +26,40 @@ jobs:
         with:
           go-version: '1.22'
 
-      # 第 3 步：编译 rclone (分步进行)
-      # 这个版本现在可以完美工作了！
+      # 新增步骤：验证文件是否存在
+      # 这是一个调试步骤，确保我们的前提假设是正确的
+      - name: Verify custom backend file exists
+        run: |
+          echo "Checking for openlist.go..."
+          ls -l backend/openlist/
+          if [ ! -f "backend/openlist/openlist.go" ]; then
+            echo "Error: backend/openlist/openlist.go not found in this branch!"
+            exit 1
+          fi
+          echo "File found. Proceeding to build."
+          
+      # 第 3 步：编译 rclone
       - name: Build rclone for Windows (amd64)
         id: build
         run: |
-          # 1. git describe 现在可以成功获取版本号了！
+          # 新增：清理 Go 缓存，确保从头开始构建
+          echo "Cleaning Go module and build cache..."
+          go clean -modcache
+          go clean -cache
+
+          # 1. 获取版本号
           RCLONE_VERSION=$(git describe --tags)
           echo "Building version: $RCLONE_VERSION"
           echo "full_version=$RCLONE_VERSION" >> "$GITHUB_OUTPUT"
           
-          # 2. 生成 Windows 资源文件 (不会再报格式错误)
+          # 2. 生成 Windows 资源文件
           echo "Generating Windows resource file..."
           go run bin/resource_windows.go -version "$RCLONE_VERSION" -syso resource_windows_amd64.syso
           
           # 3. 交叉编译 rclone 主程序
+          # 关键：在 go build 命令中加入 -a 参数，强制重新构建所有包
           echo "Cross-compiling rclone for Windows..."
-          GOOS=windows GOARCH=amd64 CGO_ENABLED=0 go build -v -o rclone.exe -ldflags "-s -w -X github.com/rclone/rclone/fs.Version=$RCLONE_VERSION"
+          GOOS=windows GOARCH=amd64 CGO_ENABLED=0 go build -v -a -o rclone.exe -ldflags "-s -w -X github.com/rclone/rclone/fs.Version=$RCLONE_VERSION"
 
       # 第 4 步：上传编译好的二进制文件
       - name: Upload Windows binary as artifact
