@@ -1,0 +1,49 @@
+# .github/workflows/build-openlist-support.yml
+
+name: Build rclone for Windows (openlist-support branch)
+
+# 1. 触发条件：只在 'openlist-support' 分支有 push 时运行
+on:
+  push:
+    branches:
+      - 'openlist-support'
+  # 也允许手动触发
+  workflow_dispatch:
+
+jobs:
+  build-windows:
+    # 在 Linux 虚拟机上运行，进行交叉编译
+    runs-on: ubuntu-latest
+
+    steps:
+      # 第 1 步：检出你的 'openlist-support' 分支的代码
+      # 无需指定仓库和分支，Action 会自动检出当前仓库的触发分支
+      - name: Checkout source code
+        uses: actions/checkout@v4
+
+      # 第 2 步：安装 Go 语言环境
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.22' # 使用一个稳定版本，可根据需要调整
+
+      # 第 3 步：编译 rclone
+      # 这是核心步骤。我们使用 'make' 并设置环境变量来进行交叉编译。
+      - name: Build rclone for Windows (amd64)
+        env:
+          # 告诉 Go 编译器目标平台
+          GOOS: windows
+          GOARCH: amd64
+          # 关键！根据官方配置，禁用 CGO 可以避免复杂的 C 交叉编译环境
+          CGO_ENABLED: 0
+        # rclone 的 Makefile 会自动识别上面的环境变量并执行正确的编译命令
+        run: make
+
+      # 第 4 步：上传编译好的 Windows 二进制文件
+      - name: Upload Windows binary as artifact
+        uses: actions/upload-artifact@v4
+        with:
+          # 构建产物的名字，方便识别
+          name: rclone-windows-amd64-openlist-support
+          # make 命令在交叉编译 Windows 版本时，会自动生成 rclone.exe
+          path: ./rclone.exe
