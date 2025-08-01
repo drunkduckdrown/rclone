@@ -1,6 +1,6 @@
 # .github/workflows/build-openlist-support.yml
 
-name: Build rclone with OpenList support (Native Windows Build)
+name: Build rclone (Official Windows Method)
 
 on:
   push:
@@ -9,54 +9,52 @@ on:
   workflow_dispatch:
 
 jobs:
-  build-on-windows:
-    # 关键：我们直接在 Windows 虚拟机上运行
+  build-windows-official-way:
+    # 1. 在 Windows 虚拟机上运行
     runs-on: windows-latest
 
     steps:
-      # 第 1 步：检出你的代码
+      # 检出你的代码
       - name: Checkout source code
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
-      # 第 2 步：安装 Go
+      # 2. 安装 Go，使用与官方一致的较新版本
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
-          go-version: '1.23.0' # 或你希望使用的 Go 版本
+          go-version: '1.24.0'
 
-      # 第 2.5 步：安装 rclone mount 的依赖 - WinFsp
-      # 关键改动(2): 在编译前安装 WinFsp
-      - name: Install WinFsp
-        run: choco install winfsp -y
-
-      # 第 3 步：在 Windows 环境下原生编译 rclone
-      - name: Build rclone for Windows
+      # 3. 模仿官方方式，编译 rclone
+      - name: Build rclone for Windows (Official Method)
         id: build
-        # 使用 PowerShell 脚本
         shell: powershell
         run: |
-          # 1. 获取版本号
+          # 获取版本号
           $RCLONE_VERSION = git describe --tags
           Write-Host "Building version: $RCLONE_VERSION"
           echo "full_version=$RCLONE_VERSION" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
           
-          # 2. (可选但推荐) 生成 Windows 资源文件，这会给 exe 加上图标和版本信息
+          # (可选但推荐) 生成 Windows 资源文件
           Write-Host "Generating Windows resource file..."
           go run bin/resource_windows.go -version "$RCLONE_VERSION" -syso resource_windows_amd64.syso
           
-          # 3. 原生编译 rclone 主程序
-          # 重点：这里不再有 GOOS, GOARCH, CGO_ENABLED=0 这些参数了！
-          # 在 Windows 上编译，CGO 默认启用，mount 命令会被自动包含。
-          Write-Host "Building rclone.exe..."
-          go build -v -a -o rclone.exe -ldflags "-s -w -X github.com/rclone/rclone/fs.Version=$($env:RCLONE_VERSION)"
-          
-          # 4. 验证产物
+          # ------------------- 核心步骤 -------------------
+          # 3a. 明确禁用 CGO，与官方 build.yml 保持一致
+          Write-Host "Setting CGO_ENABLED=0"
+          $env:CGO_ENABLED = '0'
+
+          # 3b. 使用 '-tags cmount' 编译，并注入版本信息
+          Write-Host "Building rclone.exe with 'cmount' tag and CGO disabled..."
+          go build -v -a -tags cmount -o rclone.exe -ldflags "-s -w -X github.com/rclone/rclone/fs.Version=$RCLONE_VERSION"
+          # ------------------------------------------------
+
+          # 验证产物
           Write-Host "Build complete. File info:"
           Get-Item rclone.exe
 
-      # 第 4 步：上传编译好的二进制文件
+      # 4. 上传编译好的二进制文件
       - name: Upload Windows binary as artifact
         uses: actions/upload-artifact@v4
         with:
