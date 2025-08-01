@@ -20,6 +20,12 @@ jobs:
         with:
           fetch-depth: 0
 
+      # 新增：这个步骤会安装并设置好用于交叉编译的 C 语言工具链 (MinGW)
+      - name: Set up xgo
+        uses: crazy-max/ghaction-xgo@v2
+        with:
+          xgo_version: latest
+
       # 第 2 步：安装 Go
       - name: Set up Go
         uses: actions/setup-go@v5
@@ -40,6 +46,9 @@ jobs:
           
       # 第 3 步：编译 rclone
       - name: Build rclone for Windows (amd64)
+        # 新增：env: CGO_ENABLED: 1 是关键，它告诉 Go 编译器启用 C 语言支持
+        env:
+          CGO_ENABLED: 1
         id: build
         run: |
           # 新增：清理 Go 缓存，确保从头开始构建
