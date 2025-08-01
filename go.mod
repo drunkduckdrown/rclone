@@ -1,4 +1,4 @@
-module github.com/drunkduckdrown/rclone
+module github.com/rclone/rclone
 
 go 1.23.0
 
