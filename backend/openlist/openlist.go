@@ -319,22 +319,34 @@ func NewFs(ctx context.Context, name, root string, m configmap.Mapper) (fs.Fs, e
 		CanHaveEmptyDirectories: true,
 	}).Fill(ctx, f)
 
-	// Check if root is a file
+	// Check if root is a file and handle it.
+	// This is the standard way to handle "file-like" remotes in rclone.
+	// We check if the root path points to a file. If so, we adjust the root
+	// to its parent directory and tell the rclone core that this Fs points to a file.
 	var getResp struct {
 		Data fileInfo `json:"data"`
 	}
 	err = f.doCFRequestMust(ctx, "POST", apiGet, map[string]string{"path": f.root}, &getResp)
 	if err == nil && !getResp.Data.IsDir {
-		// It's a file. Trim the file part off the root and return an Object.
+		// It's a file.
 		newRoot := path.Dir(f.root)
-		if newRoot == "." {
-			newRoot = "/"
+		if newRoot == "." || newRoot == "/" {
+			newRoot = "" // Set to empty to represent the true root
 		}
+		// The remote name is the file part of the original root.
+		remote := path.Base(f.root)
+		
+		// Adjust the Fs object's root to the parent directory.
 		f.root = newRoot
-		remote := path.Base(root)
-		return f.NewObject(ctx, remote)
+		
+		// Return the Fs object pointing to the file's parent, but also
+		// return fs.ErrorIsFile so the rclone core knows to wrap it.
+		// The core will then present it to the user as if it's just that single file.
+		// We also need to return the remote name of the file.
+		return f, fs.ErrorIsFile(remote)
 	}
-
+	// If it's a directory or an error occurred (e.g., not found, which is OK),
+	// just return the Fs object as is.
 	return f, nil
 }
 
