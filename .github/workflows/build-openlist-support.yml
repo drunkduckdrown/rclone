@@ -16,9 +16,8 @@ jobs:
       # 第 1 步：检出代码
       - name: Checkout source code
         uses: actions/checkout@v4
-        # fetch-depth: 0 仍然是好习惯，以防未来需要完整的 git 历史
         with:
-          fetch-depth: 0
+          fetch-depth: 0 # 保留，好习惯
 
       # 第 2 步：安装 Go
       - name: Set up Go
@@ -26,29 +25,27 @@ jobs:
         with:
           go-version: '1.22'
 
-      # 第 3 步：编译 rclone
+      # 第 3 步：编译 rclone (使用正确的 ldflags 方法)
       - name: Build rclone for Windows (amd64)
-        id: build # 给这个步骤一个 id，方便其他步骤引用它的输出
+        id: build
         run: |
-          # 关键改动(1): 从源码文件中提取基础版本号 (例如: v1.66.0)
-          BASE_VERSION=$(grep 'var Version = ' fs/version.go | cut -d '"' -f 2)
-          echo "Base version from source: $BASE_VERSION"
-
-          # 关键改动(2): 创建一个完美的、复合格式的版本号
+          # 关键改动(1): 我们自己定义一个符合 SemVer 格式的版本号。
+          # 我们用一个 "虚拟" 的基础版本如 "v1.55.0" 来满足 resource_windows.go 工具的要求，
+          # 后面再附加上分支名和 commit SHA，这包含了所有我们需要的信息。
           SHORT_SHA=$(git rev-parse --short HEAD)
-          # 最终版本号格式: v1.66.0-openlist-support-0d97f3bec
-          RCLONE_VERSION="${BASE_VERSION}-${{ github.ref_name }}-${SHORT_SHA}"
+          RCLONE_VERSION="v1.55.0-${{ github.ref_name }}-${SHORT_SHA}"
           echo "Building full version: $RCLONE_VERSION"
           
-          # 将这个版本号输出，以便后续步骤（如上传）可以使用它
           echo "full_version=$RCLONE_VERSION" >> "$GITHUB_OUTPUT"
 
           # 步骤 3.2: 生成 Windows 资源文件。
-          # 现在它收到的版本号以 "vX.Y.Z" 开头，可以被正确解析。
+          # 传入我们自己构造的、格式正确的版本号。
           echo "Generating Windows resource file..."
           go run bin/resource_windows.go -version "$RCLONE_VERSION" -syso resource_windows_amd64.syso
           
-          # 步骤 3.3: 交叉编译 rclone 主程序
+          # 步骤 3.3: 交叉编译 rclone 主程序。
+          # 关键改动(2): 使用 -ldflags 将我们构造的版本号直接注入到 Go 程序的 fs.Version 变量中。
+          # 这就是这个分支正确的编译方式！
           echo "Cross-compiling rclone for Windows..."
           GOOS=windows GOARCH=amd64 CGO_ENABLED=0 go build -v -o rclone.exe -ldflags "-s -w -X github.com/rclone/rclone/fs.Version=$RCLONE_VERSION"
 
@@ -56,6 +53,5 @@ jobs:
       - name: Upload Windows binary as artifact
         uses: actions/upload-artifact@v4
         with:
-          # 使用上一步输出的完整版本号来命名产物，非常清晰
           name: rclone-windows-amd64-${{ steps.build.outputs.full_version }}
           path: ./rclone.exe
