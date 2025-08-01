@@ -24,7 +24,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
-          go-version: '1.22'
+          go-version: '1.23.0'
 
       # 新增步骤：验证文件是否存在
       # 这是一个调试步骤，确保我们的前提假设是正确的
