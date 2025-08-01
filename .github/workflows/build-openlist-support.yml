@@ -26,7 +26,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
-          go-version: '1.22'
+          go-version: '1.23.0'
 
       # 第 3 步：在 Windows 环境下原生编译 rclone
       - name: Build rclone for Windows
