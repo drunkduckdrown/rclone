@@ -236,6 +236,9 @@ func (f *Fs) Root() string {
 
 // String returns a description of the Fs
 func (f *Fs) String() string {
+	if f.root == "" {
+		return fmt.Sprintf("OpenList remote %s:", f.name)
+	}
 	return fmt.Sprintf("OpenList remote %s:%s", f.name, f.root)
 }
 
@@ -253,23 +256,28 @@ func newClientWithPacer(ctx context.Context, opt *Options) *http.Client {
 }
 
 // NewFs constructs an Fs from the path, container:path.
+//
+// ====================================================================
+// ====================  FIXED/IMPROVED FUNCTION  =====================
+// ====================================================================
 func NewFs(ctx context.Context, name, root string, m configmap.Mapper) (fs.Fs, error) {
+	// -- 标准设置 --
 	opt := new(Options)
 	if err := configstruct.Set(m, opt); err != nil {
 		return nil, err
 	}
 
-	// Ensure URL does not end with '/'
+	// 规范化 URL 和 root 路径
 	opt.URL = strings.TrimSuffix(opt.URL, "/")
-	// Ensure root starts with '/'
 	if !strings.HasPrefix(root, "/") {
 		root = "/" + root
 	}
-	// Incorporate root_path if provided.
+	// 合并用户配置的 root_path
 	if opt.RootPath != "" && opt.RootPath != "/" {
 		root = path.Join(opt.RootPath, root)
 	}
 
+	// 初始化 Fs 结构体
 	f := &Fs{
 		name:           name,
 		root:           root,
@@ -278,8 +286,11 @@ func NewFs(ctx context.Context, name, root string, m configmap.Mapper) (fs.Fs, e
 		cfCookies:      make(map[string]*http.Cookie),
 		cfCookieExpiry: make(map[string]time.Time),
 	}
+	f.features = (&fs.Features{
+		CanHaveEmptyDirectories: true,
+	}).Fill(ctx, f) // Fill 会自动检测 Mover, Copier 等接口
 
-	// --- Early UA setting ---
+	// --- Cloudflare 相关设置 (非本次修改重点) ---
 	if f.opt.CfServer != "" {
 		if err := f.fetchUserAgent(ctx); err != nil {
 			fs.Infof(ctx, "Warning: failed to fetch CF user agent: %v", err)
@@ -288,12 +299,13 @@ func NewFs(ctx context.Context, name, root string, m configmap.Mapper) (fs.Fs, e
 		}
 	}
 
-	client := newClientWithPacer(ctx, opt)
+	// -- 初始化 HTTP 客户端和 API 服务 --
+	client := newClientWithPacer(ctx, &f.opt)
 	f.httpClient = client
 	f.srv = rest.NewClient(client).SetRoot(opt.URL)
 	f.pacer = fs.NewPacer(ctx, pacer.NewDefault(pacer.MinSleep(opt.PacerMinSleep), pacer.MaxSleep(maxSleep), pacer.DecayConstant(decayConstant)))
 
-	// Login if credentials are provided.
+	// -- 登录和权限检查 --
 	if f.opt.Username != "" && f.opt.Password != "" {
 		if err := f.login(ctx); err != nil {
 			return nil, fmt.Errorf("login failed: %w", err)
@@ -302,7 +314,6 @@ func NewFs(ctx context.Context, name, root string, m configmap.Mapper) (fs.Fs, e
 		f.token = ""
 	}
 
-	// Retrieve user permissions.
 	var meResp meResponse
 	err := f.doCFRequestMust(ctx, "GET", apiMe, nil, &meResp)
 	if err != nil && f.opt.CfServer != "" {
@@ -311,42 +322,55 @@ func NewFs(ctx context.Context, name, root string, m configmap.Mapper) (fs.Fs, e
 		}
 	}
 	if err != nil {
+		// 如果连 /api/me 都访问不了，则认为后端配置有问题
 		return nil, fmt.Errorf("failed to retrieve user permissions: %w", err)
 	}
 	f.userPermission = meResp.Data.Permission
 
-	f.features = (&fs.Features{
-		CanHaveEmptyDirectories: true,
-	}).Fill(ctx, f)
+	// ====================================================================
+	// ====================  关键修改部分开始  ============================
+	// ====================================================================
+	//
+	// 检查提供的 root 路径是否指向一个文件。
+	// 这是 rclone 支持 "file-like" remotes (例如 `rclone cat remote:path/to/file.txt`) 的标准实现方式。
+	//
+	// 逻辑:
+	// 1. 调用 `/api/fs/get` 接口获取 `f.root` 的信息。
+	// 2. 如果API调用成功，并且返回的 `is_dir` 为 false，说明 `f.root` 是一个文件。
+	// 3. 在这种情况下，我们需要：
+	//    a. 将 `f.root` 修改为其父目录。
+	//    b. 返回修改后的 `f` 对象。
+	//    c. 同时返回一个特殊的 `fs.ErrorIsFile` 错误，并将原始文件名作为参数传入。
+	// 4. rclone 核心会捕获这个特殊错误，并自动将我们返回的 Fs (指向父目录) 包装成一个只显示那个文件的 Fs。
+	// 5. 如果API调用失败 (例如文件不存在)，我们忽略错误，因为用户可能想写入一个新文件，这属于正常情况。
 
-	// Check if root is a file and handle it.
-	// This is the standard way to handle "file-like" remotes in rclone.
-	// We check if the root path points to a file. If so, we adjust the root
-	// to its parent directory and tell the rclone core that this Fs points to a file.
 	var getResp struct {
 		Data fileInfo `json:"data"`
 	}
+	// 使用 f.root 来查询，这个 root 已经包含了用户配置的 root_path
 	err = f.doCFRequestMust(ctx, "POST", apiGet, map[string]string{"path": f.root}, &getResp)
+
+	// 如果没有错误，并且路径指向一个文件
 	if err == nil && !getResp.Data.IsDir {
-		// It's a file.
-		newRoot := path.Dir(f.root)
-		if newRoot == "." || newRoot == "/" {
-			newRoot = "" // Set to empty to represent the true root
+		// 这是一个文件，我们需要调整 Fs 的根并返回 ErrorIsFile
+		parentDir := path.Dir(f.root)
+		fileName := path.Base(f.root)
+
+		// rclone 的 Fs 对象的内部根路径约定：真实根目录用 "" 表示，而不是 "/"
+		if parentDir == "/" {
+			parentDir = ""
 		}
-		// The remote name is the file part of the original root.
-		remote := path.Base(f.root)
-		
-		// Adjust the Fs object's root to the parent directory.
-		f.root = newRoot
-		
-		// Return the Fs object pointing to the file's parent, but also
-		// return fs.ErrorIsFile so the rclone core knows to wrap it.
-		// The core will then present it to the user as if it's just that single file.
-		// We also need to return the remote name of the file.
-		return f, fs.ErrorIsFile(remote)
+
+		// 更新 Fs 实例的 root 为其父目录
+		f.root = parentDir
+
+		// 返回指向父目录的 Fs 实例，并附上 ErrorIsFile 错误
+		// rclone 核心会处理这个特殊返回
+		return f, fs.ErrorIsFile(fileName)
 	}
-	// If it's a directory or an error occurred (e.g., not found, which is OK),
-	// just return the Fs object as is.
+
+	// 如果 `f.root` 是一个目录，或者它不存在（err != nil），
+	// 那么我们就正常返回 Fs 实例，不带错误。
 	return f, nil
 }
 
@@ -489,10 +513,14 @@ func (f *Fs) doCFRequest(req *http.Request) (*http.Response, error) {
 // shouldRetry returns true if err != nil or the HTTP status code is 429 or 5xx.
 func shouldRetry(resp *http.Response, err error) (bool, error) {
 	if err != nil {
+		// Do not retry on context cancellation
+		if strings.Contains(err.Error(), "context canceled") {
+			return false, err
+		}
 		return true, err
 	}
-	if resp.StatusCode == 429 || resp.StatusCode >= 500 {
-		return true, fmt.Errorf("got status code %d", resp.StatusCode)
+	if resp.StatusCode == 429 || (resp.StatusCode >= 500 && resp.StatusCode < 600) {
+		return true, fmt.Errorf("got retriable status code %d: %s", resp.StatusCode, resp.Status)
 	}
 	return false, nil
 }
@@ -532,7 +560,16 @@ func (f *Fs) doCFRequestStream(req *http.Request) (*http.Response, error) {
 	err = f.pacer.Call(func() (bool, error) {
 		var errPacer error
 		resp, errPacer = clientFunc(req)
-		return shouldRetry(resp, errPacer)
+		// For streams, we generally don't want to retry on 5xx errors
+		// as the body might have been partially consumed.
+		// We only retry on 429.
+		if errPacer != nil {
+			return shouldRetry(nil, errPacer)
+		}
+		if resp.StatusCode == 429 {
+			return true, fmt.Errorf("got status code 429 (Too Many Requests)")
+		}
+		return false, nil
 	})
 	if err != nil {
 		return nil, err
@@ -568,13 +605,13 @@ func (f *Fs) doCFRequestMust(ctx context.Context, method, endpoint string, data,
 	if data != nil {
 		jsonData, err := json.Marshal(data)
 		if err != nil {
-			return err
+			return fmt.Errorf("failed to marshal request data: %w", err)
 		}
 		reqBody = bytes.NewBuffer(jsonData)
 	}
 	req, err := http.NewRequestWithContext(ctx, method, f.opt.URL+endpoint, reqBody)
 	if err != nil {
-		return err
+		return fmt.Errorf("failed to create request: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "application/json, text/plain, */*")
@@ -587,7 +624,15 @@ func (f *Fs) doCFRequestMust(ctx context.Context, method, endpoint string, data,
 
 	bodyBytes, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return err
+		return fmt.Errorf("failed to read response body: %w", err)
+	}
+
+	// Handle empty response body
+	if len(bodyBytes) == 0 {
+		if resp.StatusCode >= 200 && resp.StatusCode < 300 {
+			return nil // Success with empty body
+		}
+		return fmt.Errorf("request failed with status %d and empty response body", resp.StatusCode)
 	}
 
 	if err := json.Unmarshal(bodyBytes, response); err != nil {
@@ -612,7 +657,10 @@ func (f *Fs) doCFRequestMust(ctx context.Context, method, endpoint string, data,
 
 // handleResponse checks the API response for error codes.
 func (f *Fs) handleResponse(response interface{}) error {
-	v := reflect.ValueOf(response).Elem()
+	v := reflect.ValueOf(response)
+	if v.Kind() == reflect.Ptr {
+		v = v.Elem()
+	}
 	if v.Kind() != reflect.Struct {
 		return nil
 	}
@@ -657,14 +705,15 @@ func (f *Fs) fileInfoToDirEntry(item fileInfo, dir string) fs.DirEntry {
 
 // List lists the objects and directories in dir.
 func (f *Fs) List(ctx context.Context, dir string) (entries fs.DirEntries, err error) {
-	if cached, ok := f.getCachedList(dir); ok {
+	fullPath := path.Join(f.root, dir)
+	if cached, ok := f.getCachedList(fullPath); ok {
 		for _, item := range cached.Data.Content {
 			entries = append(entries, f.fileInfoToDirEntry(item, dir))
 		}
 		return entries, nil
 	}
 	data := map[string]interface{}{
-		"path":     path.Join(f.root, dir),
+		"path":     fullPath,
 		"per_page": 0, // 0 means all
 		"page":     1,
 		"password": f.opt.MetaPass,
@@ -676,7 +725,7 @@ func (f *Fs) List(ctx context.Context, dir string) (entries fs.DirEntries, err e
 	if err = f.doCFRequestMust(ctx, "POST", apiList, data, &listResp); err != nil {
 		return nil, err
 	}
-	f.setCachedList(dir, listResp)
+	f.setCachedList(fullPath, listResp)
 	for _, item := range listResp.Data.Content {
 		entries = append(entries, f.fileInfoToDirEntry(item, dir))
 	}
@@ -750,15 +799,18 @@ func (f *Fs) Put(ctx context.Context, in io.Reader, src fs.ObjectInfo, options .
 
 	// 使父目录的缓存失效
 	parentDir := path.Dir(remote)
-	f.invalidateCache(parentDir)
+	f.invalidateCache(path.Join(f.root, parentDir))
 
 	// 创建并返回新的对象
-	return &Object{
+	o := &Object{
 		fs:      f,
 		remote:  remote,
 		size:    size,
 		modTime: modTime,
-	}, nil
+	}
+	// Note: We don't get hash info back from direct upload.
+	// We could potentially calculate it client-side if needed, but for now, we leave it empty.
+	return o, nil
 }
 
 // 新增：Move 函数，实现单个对象的服务器端移动。
@@ -774,16 +826,18 @@ func (f *Fs) Move(ctx context.Context, src fs.Object, remote string) (fs.Object,
 	srcPath := src.Remote()
 	dstPath := remote
 
-	srcDir := path.Join(f.root, path.Dir(srcPath))
-	dstDir := path.Join(f.root, path.Dir(dstPath))
-	srcName := path.Base(srcPath)
-	dstName := path.Base(dstPath)
+	srcFullPath := path.Join(f.root, srcPath)
+	dstFullPath := path.Join(f.root, dstPath)
+	srcDir := path.Dir(srcFullPath)
+	dstDir := path.Dir(dstFullPath)
+	srcName := path.Base(srcFullPath)
+	dstName := path.Base(dstFullPath)
 
 	// 情况1：在同一目录内重命名
 	if srcDir == dstDir {
 		fs.Debugf(f, "在目录 %s 中，重命名 %s 为 %s", srcDir, srcName, dstName)
 		data := map[string]string{
-			"path": path.Join(srcDir, srcName),
+			"path": srcFullPath,
 			"name": dstName,
 		}
 		var renameResp requestResponse
@@ -821,18 +875,19 @@ func (f *Fs) Move(ctx context.Context, src fs.Object, remote string) (fs.Object,
 		}
 	}
 
-	f.invalidateCache(path.Dir(srcPath))
-	f.invalidateCache(path.Dir(dstPath))
+	f.invalidateCache(srcDir)
+	f.invalidateCache(dstDir)
 
 	// 创建一个新对象来代表移动后的文件
 	newObj, err := f.NewObject(ctx, dstPath)
 	if err != nil {
 		// 如果出错，则根据源信息回退创建对象
+		fs.Debugf(f, "移动后 NewObject 失败 (%v)，回退到手动创建对象", err)
 		return &Object{
 			fs:      f,
 			remote:  dstPath,
 			size:    src.Size(),
-			modTime: src.ModTime(ctx),
+			modTime: src.ModTime(ctx), // ModTime might change, but this is a safe fallback
 		}, nil
 	}
 	return newObj, nil
@@ -851,10 +906,12 @@ func (f *Fs) Copy(ctx context.Context, src fs.Object, remote string) (fs.Object,
 	srcPath := src.Remote()
 	dstPath := remote
 
-	srcDir := path.Join(f.root, path.Dir(srcPath))
-	dstDir := path.Join(f.root, path.Dir(dstPath))
-	srcName := path.Base(srcPath)
-	dstName := path.Base(dstPath)
+	srcFullPath := path.Join(f.root, srcPath)
+	dstFullPath := path.Join(f.root, dstPath)
+	srcDir := path.Dir(srcFullPath)
+	dstDir := path.Dir(dstFullPath)
+	srcName := path.Base(srcFullPath)
+	dstName := path.Base(dstFullPath)
 
 	fs.Debugf(f, "复制 %s 从 %s 到 %s", srcName, srcDir, dstDir)
 	data := map[string]interface{}{
@@ -882,15 +939,16 @@ func (f *Fs) Copy(ctx context.Context, src fs.Object, remote string) (fs.Object,
 		}
 	}
 
-	f.invalidateCache(path.Dir(dstPath))
+	f.invalidateCache(dstDir)
 
 	newObj, err := f.NewObject(ctx, dstPath)
 	if err != nil {
+		fs.Debugf(f, "复制后 NewObject 失败 (%v)，回退到手动创建对象", err)
 		return &Object{
 			fs:      f,
 			remote:  dstPath,
 			size:    src.Size(),
-			modTime: src.ModTime(ctx),
+			modTime: src.ModTime(ctx), // ModTime will be 'now', but this is a safe fallback
 		}, nil
 	}
 	return newObj, nil
@@ -898,42 +956,41 @@ func (f *Fs) Copy(ctx context.Context, src fs.Object, remote string) (fs.Object,
 
 // Mkdir creates a directory.
 func (f *Fs) Mkdir(ctx context.Context, dir string) error {
+	fullPath := path.Join(f.root, dir)
 	data := map[string]string{
-		"path": path.Join(f.root, dir),
+		"path": fullPath,
 	}
 	var mkdirResp requestResponse
 	err := f.doCFRequestMust(ctx, "POST", apiMkdir, data, &mkdirResp)
 	if err == nil {
-		f.invalidateCache(path.Dir(dir))
+		f.invalidateCache(path.Dir(fullPath))
 	}
 	return err
 }
 
 // Rmdir removes an empty directory.
 func (f *Fs) Rmdir(ctx context.Context, dir string) error {
-	// AList's remove API can remove an empty directory by specifying its name in a parent dir.
 	parent := path.Dir(dir)
 	name := path.Base(dir)
+	fullParentPath := path.Join(f.root, parent)
+
 	data := map[string]interface{}{
-		"dir":   path.Join(f.root, parent),
+		"dir":   fullParentPath,
 		"names": []string{name},
 	}
 	var removeResp requestResponse
 	err := f.doCFRequestMust(ctx, "POST", apiRemove, data, &removeResp)
 	if err == nil {
-		f.invalidateCache(dir)
-		f.invalidateCache(parent)
+		f.invalidateCache(fullParentPath)
+		f.invalidateCache(path.Join(f.root, dir))
 	}
 	return err
 }
 
 // Purge removes a directory and all its contents.
 func (f *Fs) Purge(ctx context.Context, dir string) error {
-	// This is not directly supported by the simple remove API.
-	// Rclone will call this on a directory, so we can treat it like Rmdir.
-	// AList's WebDAV handles this, but the core API is more basic.
-	// For simplicity, we just try to remove the directory itself.
-	// If it's not empty, the API will likely return an error.
+	// AList/OpenList 'remove' API can remove non-empty directories if they are passed in 'names'.
+	// This makes Purge implementation the same as Rmdir.
 	return f.Rmdir(ctx, dir)
 }
 
@@ -958,10 +1015,10 @@ func (o *Object) SetModTime(ctx context.Context, t time.Time) error { return fs.
 func (o *Object) Storable() bool { return true }
 
 // Open retrieves the raw download URL and streams the file content.
-// This is the key function for download traffic passthrough.
 func (o *Object) Open(ctx context.Context, options ...fs.OpenOption) (io.ReadCloser, error) {
+	fullPath := path.Join(o.fs.root, o.remote)
 	data := map[string]string{
-		"path": path.Join(o.fs.root, o.remote),
+		"path": fullPath,
 	}
 	var getResp struct {
 		Data struct {
@@ -972,7 +1029,10 @@ func (o *Object) Open(ctx context.Context, options ...fs.OpenOption) (io.ReadClo
 		return nil, fmt.Errorf("failed to get raw_url: %w", err)
 	}
 	if getResp.Data.RawURL == "" {
-		return nil, fmt.Errorf("API did not return a raw_url for %s", o.remote)
+		// Fallback for drivers that don't provide raw_url (e.g. local storage on AList)
+		// We can construct the URL manually.
+		getResp.Data.RawURL = fmt.Sprintf("%s/d%s", o.fs.opt.URL, fullPath)
+		fs.Debugf(o, "API did not return a raw_url, falling back to constructed URL: %s", getResp.Data.RawURL)
 	}
 
 	fs.Debugf(o, "Opening from raw_url: %s", getResp.Data.RawURL)
@@ -1001,21 +1061,29 @@ func (o *Object) Open(ctx context.Context, options ...fs.OpenOption) (io.ReadClo
 
 // Update updates the object with new content
 func (o *Object) Update(ctx context.Context, in io.Reader, src fs.ObjectInfo, options ...fs.OpenOption) error {
+	// Calling Put will get a new direct upload URL for the object's path
 	_, err := o.fs.Put(ctx, in, src, options...)
+	if err == nil {
+		// Update object properties after successful upload
+		o.size = src.Size()
+		o.modTime = src.ModTime(ctx)
+	}
 	return err
 }
 
 // Remove removes the object
 func (o *Object) Remove(ctx context.Context) error {
+	parentDir := path.Dir(o.remote)
+	fullParentPath := path.Join(o.fs.root, parentDir)
 	data := map[string]interface{}{
-		"dir":   path.Join(o.fs.root, path.Dir(o.remote)),
+		"dir":   fullParentPath,
 		"names": []string{path.Base(o.remote)},
 	}
 	var removeResp requestResponse
 	if err := o.fs.doCFRequestMust(ctx, "POST", apiRemove, data, &removeResp); err != nil {
 		return err
 	}
-	o.fs.invalidateCache(path.Dir(o.remote))
+	o.fs.invalidateCache(fullParentPath)
 	return nil
 }
 
@@ -1023,10 +1091,19 @@ func (o *Object) Remove(ctx context.Context) error {
 func (o *Object) Hash(ctx context.Context, ty hash.Type) (string, error) {
 	switch ty {
 	case hash.MD5:
+		if o.md5sum == "" {
+			return "", hash.ErrUnsupported
+		}
 		return o.md5sum, nil
 	case hash.SHA1:
+		if o.sha1sum == "" {
+			return "", hash.ErrUnsupported
+		}
 		return o.sha1sum, nil
 	case hash.SHA256:
+		if o.sha256sum == "" {
+			return "", hash.ErrUnsupported
+		}
 		return o.sha256sum, nil
 	default:
 		return "", hash.ErrUnsupported
@@ -1068,31 +1145,32 @@ func (f *Fs) NewObject(ctx context.Context, remote string) (fs.Object, error) {
 			if obj, ok := entry.(*Object); ok {
 				return obj, nil
 			}
+			return nil, fmt.Errorf("found object %q but it is not of type *Object", remote)
 		}
 	}
 	return nil, fs.ErrorObjectNotFound
 }
 
 // getCachedList retrieves a cached directory listing.
-func (f *Fs) getCachedList(dir string) (listResponse, bool) {
+func (f *Fs) getCachedList(fullPath string) (listResponse, bool) {
 	f.fileListCacheMu.Lock()
 	defer f.fileListCacheMu.Unlock()
-	cached, ok := f.fileListCache[dir]
+	cached, ok := f.fileListCache[fullPath]
 	return cached, ok
 }
 
 // setCachedList caches a directory listing.
-func (f *Fs) setCachedList(dir string, resp listResponse) {
+func (f *Fs) setCachedList(fullPath string, resp listResponse) {
 	f.fileListCacheMu.Lock()
 	defer f.fileListCacheMu.Unlock()
-	f.fileListCache[dir] = resp
+	f.fileListCache[fullPath] = resp
 }
 
 // invalidateCache deletes the cached listing for a directory.
-func (f *Fs) invalidateCache(dir string) {
+func (f *Fs) invalidateCache(fullPath string) {
 	f.fileListCacheMu.Lock()
 	defer f.fileListCacheMu.Unlock()
-	delete(f.fileListCache, dir)
+	delete(f.fileListCache, fullPath)
 }
 
 // fetchCloudflare contacts the CF server to obtain cookies.
