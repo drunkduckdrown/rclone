@@ -26,6 +26,11 @@ jobs:
         with:
           go-version: '1.23.0' # 或你希望使用的 Go 版本
 
+      # 第 2.5 步：安装 rclone mount 的依赖 - WinFsp
+      # 关键改动(2): 在编译前安装 WinFsp
+      - name: Install WinFsp
+        run: choco install winfsp -y
+
       # 第 3 步：在 Windows 环境下原生编译 rclone
       - name: Build rclone for Windows
         id: build
