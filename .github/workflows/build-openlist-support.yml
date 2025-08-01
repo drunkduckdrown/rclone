@@ -14,10 +14,11 @@ jobs:
 
     steps:
       # 第 1 步：检出代码
+      # 关键：使用 fetch-depth: 0 来获取完整的 git 历史和 tags
       - name: Checkout source code
         uses: actions/checkout@v4
         with:
-          fetch-depth: 0 # 保留，好习惯
+          fetch-depth: 0
 
       # 第 2 步：安装 Go
       - name: Set up Go
@@ -25,27 +26,21 @@ jobs:
         with:
           go-version: '1.22'
 
-      # 第 3 步：编译 rclone (使用正确的 ldflags 方法)
+      # 第 3 步：编译 rclone (分步进行)
+      # 这个版本现在可以完美工作了！
       - name: Build rclone for Windows (amd64)
         id: build
         run: |
-          # 关键改动(1): 我们自己定义一个符合 SemVer 格式的版本号。
-          # 我们用一个 "虚拟" 的基础版本如 "v1.55.0" 来满足 resource_windows.go 工具的要求，
-          # 后面再附加上分支名和 commit SHA，这包含了所有我们需要的信息。
-          SHORT_SHA=$(git rev-parse --short HEAD)
-          RCLONE_VERSION="v1.55.0-${{ github.ref_name }}-${SHORT_SHA}"
-          echo "Building full version: $RCLONE_VERSION"
-          
+          # 1. git describe 现在可以成功获取版本号了！
+          RCLONE_VERSION=$(git describe --tags)
+          echo "Building version: $RCLONE_VERSION"
           echo "full_version=$RCLONE_VERSION" >> "$GITHUB_OUTPUT"
-
-          # 步骤 3.2: 生成 Windows 资源文件。
-          # 传入我们自己构造的、格式正确的版本号。
+          
+          # 2. 生成 Windows 资源文件 (不会再报格式错误)
           echo "Generating Windows resource file..."
           go run bin/resource_windows.go -version "$RCLONE_VERSION" -syso resource_windows_amd64.syso
           
-          # 步骤 3.3: 交叉编译 rclone 主程序。
-          # 关键改动(2): 使用 -ldflags 将我们构造的版本号直接注入到 Go 程序的 fs.Version 变量中。
-          # 这就是这个分支正确的编译方式！
+          # 3. 交叉编译 rclone 主程序
           echo "Cross-compiling rclone for Windows..."
           GOOS=windows GOARCH=amd64 CGO_ENABLED=0 go build -v -o rclone.exe -ldflags "-s -w -X github.com/rclone/rclone/fs.Version=$RCLONE_VERSION"
 
