@@ -14,9 +14,9 @@ jobs:
 
     steps:
       # 第 1 步：检出代码
-      # fetch-depth: 0 仍然是好习惯，虽然我们不再用 describe
       - name: Checkout source code
         uses: actions/checkout@v4
+        # fetch-depth: 0 仍然是好习惯，以防未来需要完整的 git 历史
         with:
           fetch-depth: 0
 
@@ -28,21 +28,27 @@ jobs:
 
       # 第 3 步：编译 rclone
       - name: Build rclone for Windows (amd64)
+        id: build # 给这个步骤一个 id，方便其他步骤引用它的输出
         run: |
-          # 关键改动: 创建一个不依赖 tag 的版本号
-          # 我们使用 分支名 + 短格式的commit哈希
-          # 例如: openlist-support-a1b2c3d
+          # 关键改动(1): 从源码文件中提取基础版本号 (例如: v1.66.0)
+          BASE_VERSION=$(grep 'var Version = ' fs/version.go | cut -d '"' -f 2)
+          echo "Base version from source: $BASE_VERSION"
+
+          # 关键改动(2): 创建一个完美的、复合格式的版本号
           SHORT_SHA=$(git rev-parse --short HEAD)
-          RCLONE_VERSION="${{ github.ref_name }}-${SHORT_SHA}"
-          echo "Building version: $RCLONE_VERSION"
+          # 最终版本号格式: v1.66.0-openlist-support-0d97f3bec
+          RCLONE_VERSION="${BASE_VERSION}-${{ github.ref_name }}-${SHORT_SHA}"
+          echo "Building full version: $RCLONE_VERSION"
           
-          # 步骤 3.2: 生成 Windows 资源文件
-          # 这一步现在使用我们自己生成的版本号
+          # 将这个版本号输出，以便后续步骤（如上传）可以使用它
+          echo "full_version=$RCLONE_VERSION" >> "$GITHUB_OUTPUT"
+
+          # 步骤 3.2: 生成 Windows 资源文件。
+          # 现在它收到的版本号以 "vX.Y.Z" 开头，可以被正确解析。
           echo "Generating Windows resource file..."
           go run bin/resource_windows.go -version "$RCLONE_VERSION" -syso resource_windows_amd64.syso
           
           # 步骤 3.3: 交叉编译 rclone 主程序
-          # 同样，将我们自己的版本号注入到最终的二进制文件中
           echo "Cross-compiling rclone for Windows..."
           GOOS=windows GOARCH=amd64 CGO_ENABLED=0 go build -v -o rclone.exe -ldflags "-s -w -X github.com/rclone/rclone/fs.Version=$RCLONE_VERSION"
 
@@ -50,8 +56,6 @@ jobs:
       - name: Upload Windows binary as artifact
         uses: actions/upload-artifact@v4
         with:
-          name: rclone-windows-amd64-${{ github.ref_name }}-${{ env.SHORT_SHA }}
+          # 使用上一步输出的完整版本号来命名产物，非常清晰
+          name: rclone-windows-amd64-${{ steps.build.outputs.full_version }}
           path: ./rclone.exe
-        env:
-          # 从上一步获取 SHORT_SHA 以便在文件名中使用
-          SHORT_SHA: $(git rev-parse --short HEAD)
