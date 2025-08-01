@@ -45,7 +45,7 @@ jobs:
           # 重点：这里不再有 GOOS, GOARCH, CGO_ENABLED=0 这些参数了！
           # 在 Windows 上编译，CGO 默认启用，mount 命令会被自动包含。
           Write-Host "Building rclone.exe..."
-          go build -v -a -o rclone.exe -ldflags "-s -w -X github.com/rclone/rclone/fs.Version=$RCLONE_VERSION"
+          go build -v -a -o rclone.exe -ldflags "-s -w -X github.com/rclone/rclone/fs.Version=$($env:RCLONE_VERSION)"
           
           # 4. 验证产物
           Write-Host "Build complete. File info:"
