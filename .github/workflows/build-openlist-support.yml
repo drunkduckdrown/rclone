@@ -2,48 +2,53 @@
 
 name: Build rclone for Windows (openlist-support branch)
 
-# 1. 触发条件：只在 'openlist-support' 分支有 push 时运行
 on:
   push:
     branches:
       - 'openlist-support'
-  # 也允许手动触发
   workflow_dispatch:
 
 jobs:
   build-windows:
-    # 在 Linux 虚拟机上运行，进行交叉编译
     runs-on: ubuntu-latest
 
     steps:
-      # 第 1 步：检出你的 'openlist-support' 分支的代码
-      # 无需指定仓库和分支，Action 会自动检出当前仓库的触发分支
+      # 第 1 步：检出代码
+      # 关键改动(1): 使用 fetch-depth: 0 来获取完整的 git 历史和 tags
       - name: Checkout source code
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
-      # 第 2 步：安装 Go 语言环境
+      # 第 2 步：安装 Go
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
-          go-version: '1.22' # 使用一个稳定版本，可根据需要调整
+          go-version: '1.22'
 
-      # 第 3 步：编译 rclone
-      # 这是核心步骤。我们使用 'make' 并设置环境变量来进行交叉编译。
+      # 第 3 步：编译 rclone (分步进行，解决核心问题)
+      # 关键改动(2): 我们不再使用 'make'，而是手动分步执行
       - name: Build rclone for Windows (amd64)
-        env:
-          # 告诉 Go 编译器目标平台
-          GOOS: windows
-          GOARCH: amd64
-          # 关键！根据官方配置，禁用 CGO 可以避免复杂的 C 交叉编译环境
-          CGO_ENABLED: 0
-        # rclone 的 Makefile 会自动识别上面的环境变量并执行正确的编译命令
-        run: make
+        run: |
+          # 步骤 3.1: 手动获取版本号，就像 Makefile 做的那样
+          RCLONE_VERSION=$(git describe --tags)
+          echo "Building version: $RCLONE_VERSION"
+          
+          # 步骤 3.2: 编译并运行 resource_windows.go 工具。
+          # 这一步【没有】设置 GOOS=windows，所以它会在 Linux 上原生编译和运行，生成 .syso 文件。
+          # 这是解决 "exec format error" 的关键。
+          echo "Generating Windows resource file..."
+          go run bin/resource_windows.go -version "$RCLONE_VERSION" -syso resource_windows_amd64.syso
+          
+          # 步骤 3.3: 编译 rclone 主程序。
+          # 只有在这一步，我们才设置 GOOS 和 GOARCH 来进行交叉编译。
+          # Go 编译器会自动找到并使用上一步生成的 resource_windows_amd64.syso 文件。
+          echo "Cross-compiling rclone for Windows..."
+          GOOS=windows GOARCH=amd64 CGO_ENABLED=0 go build -v -o rclone.exe -ldflags "-s -w -X github.com/rclone/rclone/fs.Version=$RCLONE_VERSION"
 
-      # 第 4 步：上传编译好的 Windows 二进制文件
+      # 第 4 步：上传编译好的二进制文件
       - name: Upload Windows binary as artifact
         uses: actions/upload-artifact@v4
         with:
-          # 构建产物的名字，方便识别
           name: rclone-windows-amd64-openlist-support
-          # make 命令在交叉编译 Windows 版本时，会自动生成 rclone.exe
           path: ./rclone.exe
