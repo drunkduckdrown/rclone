@@ -14,7 +14,7 @@ jobs:
 
     steps:
       # 第 1 步：检出代码
-      # 关键改动(1): 使用 fetch-depth: 0 来获取完整的 git 历史和 tags
+      # fetch-depth: 0 仍然是好习惯，虽然我们不再用 describe
       - name: Checkout source code
         uses: actions/checkout@v4
         with:
@@ -26,23 +26,23 @@ jobs:
         with:
           go-version: '1.22'
 
-      # 第 3 步：编译 rclone (分步进行，解决核心问题)
-      # 关键改动(2): 我们不再使用 'make'，而是手动分步执行
+      # 第 3 步：编译 rclone
       - name: Build rclone for Windows (amd64)
         run: |
-          # 步骤 3.1: 手动获取版本号，就像 Makefile 做的那样
-          RCLONE_VERSION=$(git describe --tags)
+          # 关键改动: 创建一个不依赖 tag 的版本号
+          # 我们使用 分支名 + 短格式的commit哈希
+          # 例如: openlist-support-a1b2c3d
+          SHORT_SHA=$(git rev-parse --short HEAD)
+          RCLONE_VERSION="${{ github.ref_name }}-${SHORT_SHA}"
           echo "Building version: $RCLONE_VERSION"
           
-          # 步骤 3.2: 编译并运行 resource_windows.go 工具。
-          # 这一步【没有】设置 GOOS=windows，所以它会在 Linux 上原生编译和运行，生成 .syso 文件。
-          # 这是解决 "exec format error" 的关键。
+          # 步骤 3.2: 生成 Windows 资源文件
+          # 这一步现在使用我们自己生成的版本号
           echo "Generating Windows resource file..."
           go run bin/resource_windows.go -version "$RCLONE_VERSION" -syso resource_windows_amd64.syso
           
-          # 步骤 3.3: 编译 rclone 主程序。
-          # 只有在这一步，我们才设置 GOOS 和 GOARCH 来进行交叉编译。
-          # Go 编译器会自动找到并使用上一步生成的 resource_windows_amd64.syso 文件。
+          # 步骤 3.3: 交叉编译 rclone 主程序
+          # 同样，将我们自己的版本号注入到最终的二进制文件中
           echo "Cross-compiling rclone for Windows..."
           GOOS=windows GOARCH=amd64 CGO_ENABLED=0 go build -v -o rclone.exe -ldflags "-s -w -X github.com/rclone/rclone/fs.Version=$RCLONE_VERSION"
 
@@ -50,5 +50,8 @@ jobs:
       - name: Upload Windows binary as artifact
         uses: actions/upload-artifact@v4
         with:
-          name: rclone-windows-amd64-openlist-support
+          name: rclone-windows-amd64-${{ github.ref_name }}-${{ env.SHORT_SHA }}
           path: ./rclone.exe
+        env:
+          # 从上一步获取 SHORT_SHA 以便在文件名中使用
+          SHORT_SHA: $(git rev-parse --short HEAD)
