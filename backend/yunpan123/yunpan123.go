@@ -7,7 +7,7 @@ import (
 	// 导入你的 123 云盘后端包。
 	// 这里的路径需要与你在 go.mod 中定义的模块路径一致，
 	// 加上你后端代码所在的目录名 (cloud123)。
-	_ "github.com/rclone/rclone/backend/123yunpan/cloud123"
+	_ "github.com/rclone/rclone/backend/yunpan123/cloud123"
 
 	"github.com/rclone/rclone/cmd"
 	_ "github.com/rclone/rclone/fs/config/configfile" // 确保 rclone 能加载配置文件
