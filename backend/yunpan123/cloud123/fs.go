@@ -21,10 +21,10 @@ import (
 	
 
 	"github.com/rclone/rclone/fs"
-	"github.com/rclone/rclone/fshttp"
+	"github.com/rclone/rclone/fs/fshttp"
 	"github.com/rclone/rclone/fs/config/configmap"
 	"github.com/rclone/rclone/fs/log"
-	"github.com/rclone/rclone/fs/sync/pacer"
+	"github.com/rclone/rclone/fs/pacer"
 	"github.com/rclone/rclone/lib/rest"
 
 	// 导入你的 tokenmanager 包，路径需要与你的 go.mod 模块路径一致
