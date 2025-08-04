@@ -286,7 +286,7 @@ func init() {
 // Options defines the configuration for this backend
 type Options struct {
 	Cloud_function_url              string     `config:"Cloud_function_url"`
-	Cloud_function_auth_token       string     `config:"Aloud_function_auth_token"`
+	Cloud_function_auth_token       string     `config:"Cloud_function_auth_token"`
 	Api_base_url                    string     `config:"Api_base_url"`
 }
 
