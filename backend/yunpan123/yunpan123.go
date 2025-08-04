@@ -219,7 +219,7 @@ func NewFs(ctx context.Context, name, root string, m configmap.Mapper) (fs.Fs, e
 	f := &Fs{
 		name:     name,
 		root:     root,
-		opt:      opt,
+		opt:      *opt,
 		// pacer:    pacer.New().SetMinSleep(10 * time.Millisecond),
 		client:   apiClient,
 		tokenMgr: tokenMgr,
