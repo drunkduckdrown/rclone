@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 
 	"github.com/rclone/rclone/fs"
+	"github.com/rclone/rclone/fs/hash"
 	//"github.com/rclone/rclone/fs/log"
 )
 
@@ -77,11 +78,11 @@ func (o *Object) Remote() string {
 }
 
 // Hash 方法现在可以返回 MD5 哈希值了
-func (o *Object) Hash(ctx context.Context, ty fs.HashType) (string, error) {
-	if ty == fs.HashMD5 {
+func (o *Object) Hash(ctx context.Context, ty hash.Type) (string, error) {
+	if ty == hash.MD5 {
 		return o.hash, nil
 	}
-	return "", fs.ErrHashUnsupported
+	return "", hash.ErrUnsupported
 }
 
 // Size returns the size of the file

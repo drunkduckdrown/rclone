@@ -21,6 +21,7 @@ import (
 	
 
 	"github.com/rclone/rclone/fs"
+	"github.com/rclone/rclone/fs/hash"
 	//"github.com/rclone/rclone/fs/fshttp"
 	"github.com/rclone/rclone/fs/config/configmap"
 	//"github.com/rclone/rclone/fs/log"
@@ -351,8 +352,8 @@ func (f *Fs) Precision() time.Duration {
 }
 
 // Hashes returns the supported hash types
-func (f *Fs) Hashes() fs.HashSet {
-	return fs.HashSet(0)
+func (f *Fs) Hashes() hash.Set {
+	return hash.Set(hash.MD5)
 }
 
 // Pacer returns the pacer for this Fs
