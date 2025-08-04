@@ -1210,8 +1210,6 @@ func (f *Fs) Purge(ctx context.Context, remote string) error {
 	return f.Rmdir(ctx, remote)
 }
 
-	return nil
-}
  
 // internalMove 是一个通用的内部函数，用于将任何项目（文件或目录）移动到新的父目录。
 func (f *Fs) internalMove(ctx context.Context, itemID int64, dstParentPath string) error {
