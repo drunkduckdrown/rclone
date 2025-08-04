@@ -117,6 +117,11 @@ func (o *Object) ModTime(ctx context.Context) time.Time {
 	return o.modTime
 }
 
+// String returns
+func (o *Object) String() string {
+	return ""
+}
+
 // SetModTime sets the modification time of the file
 func (o *Object) SetModTime(ctx context.Context, t time.Time) error {
 	// TODO: 如果 123 云盘 API 支持设置修改时间，则实现此方法
@@ -202,7 +207,7 @@ func NewFs(ctx context.Context, name, root string, m configmap.Mapper) (fs.Fs, e
 
 	// 3. 首次获取 token (使用 /get_token)
 	fs.Debugf(nil, "[123CloudFs] Attempting to get initial token from cloud function...")
-	err := tokenMgr.GetAndStoreToken("/get_token")
+	err = tokenMgr.GetAndStoreToken("/get_token")
 	if err != nil {
 		return nil, fmt.Errorf("failed to get initial token from cloud function: %w", err)
 	}
@@ -227,7 +232,7 @@ func NewFs(ctx context.Context, name, root string, m configmap.Mapper) (fs.Fs, e
 		cacheTTL:     10 * time.Second, // *** 设置缓存TTL为10秒 ***
 	}
 	// 根目录的缓存永不过期，或者给一个很长的过期时间
-	f.pathCache[""] = &cacheEntry{id: 0, expiresAt: time.Now().Add(50 * time.Year)}
+	f.pathCache[""] = &cacheEntry{id: 0, expiresAt: time.Now().Add(time.Year)}
 	
 	// 启动后台缓存清理协程
 	go f.startCacheCleaner(ctx)
@@ -235,12 +240,11 @@ func NewFs(ctx context.Context, name, root string, m configmap.Mapper) (fs.Fs, e
 
 	// 7. 定义后端支持的特性 (后续会详细实现)
 	f.features = (&fs.Features{
-		CanListR:      false,
 		ReadMimeType:  false,
 //		Put:           f.Put,
 //		Mkdir:         f.Mkdir,
 //		Rmdir:         f.Rmdir,
-//		Delete:        f.Delete,
+//		Remove:        f.Remove,
 //		Purge:         f.Purge,
 //		Move:          f.Move,
 //		// Rename:        f.Rename,
@@ -1087,7 +1091,7 @@ func (f *Fs) Put(ctx context.Context, in io.Reader, src fs.ObjectInfo, options .
 }
 
 // trashItems a list of file or directory IDs.
-// This is the shared helper function for Delete, Rmdir, and Purge.
+// This is the shared helper function for Remove, Rmdir, and Purge.
 func (f *Fs) trashItems(ctx context.Context, fileIDs []int64) error {
 	if len(fileIDs) == 0 {
 		return nil // Nothing to do
@@ -1161,8 +1165,8 @@ func (f *Fs) clearPathCacheFor(remote string) {
 	}
 }
 
-// Delete removes a single file.
-func (f *Fs) Delete(ctx context.Context, o fs.Object) error {
+// Remove removes a single file.
+func (f *Fs) Remove(ctx context.Context, o fs.Object) error {
 	obj, ok := o.(*Object)
 	if !ok {
 		return fmt.Errorf("not a cloud123 object: %T", o)
@@ -1443,30 +1447,19 @@ func (f *Fs) open(ctx context.Context, o *Object, options ...fs.OpenOption) (io.
 //var (
 //	// --- Fs an Fs interface ---
 //	_ fs.Fs      = (*Fs)(nil)
-//	_ fs.Lister  = (*Fs)(nil) // For List
 //	_ fs.Abouter = (*Fs)(nil) // For About
-//	_ fs.Putter  = (*Fs)(nil) // For Put
-//	_ fs.Mkdirer = (*Fs)(nil) // For Mkdir
-//	_ fs.Rmdirer = (*Fs)(nil) // For Rmdir (确保这行存在且未被注释)
-//	_ fs.Deleter = (*Fs)(nil) // For Delete (确保这行存在且未被注释)
-//    _ fs.Mover   = (*Fs)(nil) // 当我们实现 Move 时，会添加这一行
-//	// _ fs.Renamer   = (*Fs)(nil) // 当我们实现 Move 时，会添加这一行
-//    _ fs.Purger  = (*Fs)(nil) // 当我们实现 Purge 时，会添加这一行
+//  _ fs.Purger  = (*Fs)(nil) // 当我们实现 Purge 时，会添加这一行
 //
 //	// --- Object an Object interface ---
 //	_ fs.Object  = (*Object)(nil)
-//	_ fs.Opener  = (*Object)(nil) // 检查 Object 是否实现了 Open
 //)
 
 // Check the interfaces are satisfied
 var (
 	_ fs.Fs             = &Fs{}
 	_ fs.Abouter        = &Fs{}
-	_ fs.Deleter        = &Fs{}
-	_ fs.Rmdirer        = &Fs{}
-	_ fs.Mkdirer        = &Fs{}
+	_ fs.Purger         = &Fs{}
 	_ fs.Mover          = &Fs{}
-	_ fs.Lister         = &Fs{}
 	//_ fs.DirMover       = &Fs{}
 	_ fs.Object         = &Object{}
 )
