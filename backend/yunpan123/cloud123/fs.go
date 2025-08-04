@@ -1281,20 +1281,27 @@ func (f *Fs) open(ctx context.Context, o *Object, options ...fs.OpenOption) (io.
 }
 
 // Check the interfaces are satisfied
-var (
-	// --- Fs an Fs interface ---
-	_ fs.Fs      = (*Fs)(nil)
-	_ fs.Lister  = (*Fs)(nil) // For List
-	_ fs.Abouter = (*Fs)(nil) // For About
-	_ fs.Putter  = (*Fs)(nil) // For Put
-	_ fs.Mkdirer = (*Fs)(nil) // For Mkdir
-	_ fs.Rmdirer = (*Fs)(nil) // For Rmdir (确保这行存在且未被注释)
-	_ fs.Deleter = (*Fs)(nil) // For Delete (确保这行存在且未被注释)
-    _ fs.Mover   = (*Fs)(nil) // 当我们实现 Move 时，会添加这一行
-	// _ fs.Renamer   = (*Fs)(nil) // 当我们实现 Move 时，会添加这一行
-    _ fs.Purger  = (*Fs)(nil) // 当我们实现 Purge 时，会添加这一行
+//var (
+//	// --- Fs an Fs interface ---
+//	_ fs.Fs      = (*Fs)(nil)
+//	_ fs.Lister  = (*Fs)(nil) // For List
+//	_ fs.Abouter = (*Fs)(nil) // For About
+//	_ fs.Putter  = (*Fs)(nil) // For Put
+//	_ fs.Mkdirer = (*Fs)(nil) // For Mkdir
+//	_ fs.Rmdirer = (*Fs)(nil) // For Rmdir (确保这行存在且未被注释)
+//	_ fs.Deleter = (*Fs)(nil) // For Delete (确保这行存在且未被注释)
+//    _ fs.Mover   = (*Fs)(nil) // 当我们实现 Move 时，会添加这一行
+//	// _ fs.Renamer   = (*Fs)(nil) // 当我们实现 Move 时，会添加这一行
+//    _ fs.Purger  = (*Fs)(nil) // 当我们实现 Purge 时，会添加这一行
+//
+//	// --- Object an Object interface ---
+//	_ fs.Object  = (*Object)(nil)
+//	_ fs.Opener  = (*Object)(nil) // 检查 Object 是否实现了 Open
+//)
 
-	// --- Object an Object interface ---
-	_ fs.Object  = (*Object)(nil)
-	_ fs.Opener  = (*Object)(nil) // 检查 Object 是否实现了 Open
+// Check the interfaces are satisfied
+var (
+	_ fs.Fs              = &Fs{}
+	_ fs.Purger          = &Fs{}
+	_ fs.Object          = &Object{}
 )
