@@ -184,9 +184,9 @@ func NewFs(ctx context.Context, name, root string, m configmap.Mapper) (fs.Fs, e
 		return nil, err
 	}
 	// 1. 从 opt 中读取配置参数
-	cloudFunctionURL := opt.cloud_function_url
-	cloudFunctionAuthToken := opt.cloud_function_auth_token // 新名称
-	apiBaseURL := opt.api_base_url
+	cloudFunctionURL := opt.Cloud_function_url
+	cloudFunctionAuthToken := opt.Cloud_function_auth_token // 新名称
+	apiBaseURL := opt.Api_base_url
 
 	// 检查必要参数是否已提供
 	if cloudFunctionURL == "" {
@@ -261,20 +261,20 @@ func init() {
 		NewFs:       NewFs, // 后端初始化函数，稍后实现
 		Options: []fs.Option{{
 		// 云函数URL，用于获取和刷新 token
-				Name:     "cloud_function_url",
+				Name:     "Cloud_function_url",
 				Help:     "URL of your cloud function for token management (e.g., https://***.cn-shenzhen.fcapp.run)",
 				Required: true,
 				Advanced: false,
 		},{
 		// 云函数鉴权 (Bearer Token)
-				Name:     "cloud_function_auth_token", // 更改名称以更清晰
+				Name:     "Cloud_function_auth_token", // 更改名称以更清晰
 				Help:     "Bearer token for authenticating with your cloud function.", // 帮助文本更新
 				Required: true,
 				Advanced: false,
 				Sensitive:  true, // 标记为敏感信息，rclone 会加密存储
 		},{
 		// 网盘API地址
-				Name:     "api_base_url",
+				Name:     "Api_base_url",
 				Help:     "Base URL for 123 Cloud Drive API (e.g., https://open-api.123pan.com)",
 				Required: true,
 				Advanced: false,
@@ -285,9 +285,9 @@ func init() {
 
 // Options defines the configuration for this backend
 type Options struct {
-	cloud_function_url              string     `config:"cloud_function_url"`
-	cloud_function_auth_token       string     `config:"cloud_function_auth_token"`
-	api_base_url                    string     `config:"api_base_url"`
+	Cloud_function_url              string     `config:"cloud_function_url"`
+	Cloud_function_auth_token       string     `config:"cloud_function_auth_token"`
+	Api_base_url                    string     `config:"api_base_url"`
 }
 
 // ------------------------------------------------------------------------------------
