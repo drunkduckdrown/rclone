@@ -20,14 +20,12 @@ func init() {
 		// 云函数URL，用于获取和刷新 token
 				Name:     "cloud_function_url",
 				Help:     "URL of your cloud function for token management (e.g., https://***.cn-shenzhen.fcapp.run)",
-				Type:     config.TypeString,
 				Required: true,
 				Advanced: false,
 		},{
 		// 云函数URL，用于获取和刷新 token
 				Name:     "api_base_url",
 				Help:     "Base URL for 123 Cloud Drive API (e.g., https://open-api.123pan.com)",
-				Type:     config.TypeString,
 				Required: true,
 				Advanced: false,
 				Default:  "https://open-api.123pan.com", // 假设的默认值，请根据实际情况修改
@@ -35,7 +33,6 @@ func init() {
 		// 云函数鉴权 (Bearer Token)
 				Name:     "cloud_function_auth_token", // 更改名称以更清晰
 				Help:     "Bearer token for authenticating with your cloud function.", // 帮助文本更新
-				Type:     config.TypeString,
 				Required: true,
 				Advanced: false,
 				Sensitive:  true, // 标记为敏感信息，rclone 会加密存储
