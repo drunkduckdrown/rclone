@@ -190,13 +190,13 @@ func NewFs(ctx context.Context, name, root string, m configmap.Mapper) (fs.Fs, e
 
 	// 检查必要参数是否已提供
 	if cloudFunctionURL == "" {
-		return nil, fmt.Errorf("cloud_function_url is not set in rclone config")
+		return nil, fmt.Errorf("Cloud_function_url is not set in rclone config")
 	}
 	if cloudFunctionAuthToken == "" { // 新名称
-		return nil, fmt.Errorf("cloud_function_auth_token is not set in rclone config")
+		return nil, fmt.Errorf("Cloud_function_auth_token is not set in rclone config")
 	}
 	if apiBaseURL == "" {
-		return nil, fmt.Errorf("api_base_url is not set in rclone config")
+		return nil, fmt.Errorf("Api_base_url is not set in rclone config")
 	}
 
 	// 2. 初始化你的 TokenManager
@@ -285,9 +285,9 @@ func init() {
 
 // Options defines the configuration for this backend
 type Options struct {
-	Cloud_function_url              string     `config:"cloud_function_url"`
-	Cloud_function_auth_token       string     `config:"cloud_function_auth_token"`
-	Api_base_url                    string     `config:"api_base_url"`
+	Cloud_function_url              string     `config:"Cloud_function_url"`
+	Cloud_function_auth_token       string     `config:"Aloud_function_auth_token"`
+	Api_base_url                    string     `config:"Api_base_url"`
 }
 
 // ------------------------------------------------------------------------------------
