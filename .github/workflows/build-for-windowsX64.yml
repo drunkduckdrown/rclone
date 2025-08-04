@@ -26,27 +26,34 @@ jobs:
         with:
           go-version: '1.24.0'
 
-      # ------------------- 新增的诊断步骤 -------------------
+      # ------------------- 修正后的诊断步骤 -------------------
       - name: Diagnose 'fs' identifier
         id: diagnose
         shell: powershell
-        continue-on-error: true # 即使此步骤失败，也继续执行后续步骤
+        continue-on-error: true
         run: |
           Write-Host "Diagnosing all occurrences of 'fs' identifier in the backend..."
-          # 这个命令会列出 backend/yunpan123 目录下所有 .go 文件中 'fs' 的定义位置
-          # 我们用 go list 来做这件事，它能理解 Go 的语法
-          go list -f '{{range .GoFiles}} {{$.Dir}}/{{.}} {{end}}' ./backend/yunpan123/... | ForEach-Object {
-            $filePath = $_
+          
+          # 修正1: 去掉了格式化字符串开头的空格
+          # 修正2: 使用 .Trim() 清理路径两端的任何空白字符
+          go list -f '{{range .GoFiles}}{{.Dir}}/{{.}}{{println}}{{end}}' ./backend/yunpan123/... | ForEach-Object {
+            $filePath = $_.Trim()
+            if (-not ($filePath)) { return } # 跳过空行
+
             Write-Host "--- Analyzing file: $filePath ---"
-            # 使用 go tool astrap 来查找所有 'fs' 标识符的定义
-            # 如果 go tool astrap 不可用，可以用其他文本搜索工具，但 go tool 更精确
-            # 这是一个更简单的文本搜索方法，适用于所有环境
-            Select-String -Path $filePath -Pattern '\bfs\b' -AllMatches | ForEach-Object {
-              Write-Host "Found 'fs' at $($_.LineNumber): $($_.Line)"
+            
+            # 确保文件存在再进行搜索
+            if (Test-Path -Path $filePath -PathType Leaf) {
+              Select-String -Path $filePath -Pattern '\bfs\b' -AllMatches | ForEach-Object {
+                Write-Host "Found 'fs' at $($_.LineNumber): $($_.Line)"
+              }
+            } else {
+              Write-Host "File not found or is not a file: $filePath"
             }
           }
           Write-Host "--- End of diagnosis ---"
       # ----------------------------------------------------
+
 
       # 3. 模仿官方方式，编译 rclone
       - name: Build rclone for Windows (Official Method)
