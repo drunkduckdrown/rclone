@@ -230,14 +230,14 @@ func NewFs(ctx context.Context, name, root string, m configmap.Mapper) (fs.Fs, e
 	f.features = (&fs.Features{
 		CanListR:      false,
 		ReadMimeType:  false,
-		Put:           f.Put,
-		Mkdir:         f.Mkdir,
-		Rmdir:         f.Rmdir,
-		Delete:        f.Delete,
-		Purge:         f.Purge,
-		Move:          f.Move,
-		// Rename:        f.Rename,
-		About:         f.About,
+//		Put:           f.Put,
+//		Mkdir:         f.Mkdir,
+//		Rmdir:         f.Rmdir,
+//		Delete:        f.Delete,
+//		Purge:         f.Purge,
+//		Move:          f.Move,
+//		// Rename:        f.Rename,
+//		About:         f.About,
 	}).Fill(ctx, f)
 
 	fs.Debugf(nil, "[123CloudFs] Backend initialized successfully.")
