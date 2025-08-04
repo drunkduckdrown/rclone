@@ -10,8 +10,6 @@ import (
 	"net/http"
 	"net/url" // 新增导入
 	"path"    // 新增导入
-	"mime"
-	"path/filepath"
 	"strconv" // 新增导入
 	"strings" // 新增导入
 	"sync"
@@ -778,8 +776,7 @@ func (f *Fs) putSingle(ctx context.Context, in io.Reader, src fs.ObjectInfo, siz
 	}
 
 	// 3. 计算 MD5 哈希 (rclone 会自动为我们提供)
-	hashes, _ := src.Hash(ctx, hash.MD5)
-	md5sum, ok := hashes[hash.MD5]
+	md5sum, _ := src.Hash(ctx, hash.MD5)
 	if !ok || md5sum == "" {
 		return nil, errors.New("MD5 hash is required for upload but was not provided")
 	}
@@ -872,8 +869,7 @@ func (f *Fs) putChunked(ctx context.Context, in io.Reader, src fs.ObjectInfo, op
 		return nil, fmt.Errorf("chunked upload: failed to find parent directory: %w", err)
 	}
 
-	hashes, _ := src.Hash(ctx, hash.MD5)
-	md5sum, ok := hashes[hash.MD5]
+	md5sum, _ := src.Hash(ctx, hash.MD5)
 	if !ok || md5sum == "" {
 		return nil, errors.New("chunked upload: MD5 hash is required but was not provided")
 	}
@@ -1166,10 +1162,10 @@ func (f *Fs) clearPathCacheFor(remote string) {
 
 // Remove removes a single file.
 func (o *Object) Remove(ctx context.Context) error {
-	obj, ok := o.(*Object)
-	if !ok {
-		return fmt.Errorf("not a cloud123 object: %T", o)
-	}
+	//obj, ok := o.(*Object)
+	//if !ok {
+	//	return fmt.Errorf("not a cloud123 object: %T", o)
+	//}
 
 	fs.Debugf(obj, "Deleting file")
 	err := o.fs.trashItems(ctx, []int64{obj.id})
@@ -1214,7 +1210,7 @@ func (f *Fs) Purge(ctx context.Context, remote string) error {
 	return f.Rmdir(ctx, remote)
 }
 
-// Rename renames a file or directory.
+// Rename renames a file
 func (f *Fs) Rename(ctx context.Context, o fs.Object, newName string) (fs.Object, error) {
 	srcObj, ok := o.(*Object)
 	if !ok {
@@ -1253,7 +1249,7 @@ func (f *Fs) Rename(ctx context.Context, o fs.Object, newName string) (fs.Object
 	srcObj.remote = newRemote
 	srcObj.name = newName
 	
-	return srcObj
+	return srcObj,nil
 }
 
 
@@ -1320,7 +1316,7 @@ func (f *Fs) Move(ctx context.Context, src fs.Object, remote string) (fs.Object,
 		srcObj.remote = remote
 		srcObj.parentFileId = dstParentID
 		
-		return srcObj
+		return srcObj,nil
 	}
 
 	// --- 情况 B: 只重命名 ---
