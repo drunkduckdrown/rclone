@@ -62,7 +62,7 @@ func newObject(ctx context.Context, f *Fs, remote string, info *FileInfoV2) (*Ob
 
 	if info != nil {
 		o.id = info.FileId
-		o.parentFileId = info.parentFileId // *** 填充新增字段 ***
+		o.parentFileId = info.ParentFileId // *** 填充新增字段 ***
 		o.name = info.Filename
 		o.size = info.Size
 		o.hash = info.Etag
@@ -1155,7 +1155,7 @@ func (f *Fs) Delete(ctx context.Context, o fs.Object) error {
 	}
 
 	fs.Debugf(obj, "Deleting file")
-	err := f.trashItems(ctx, []int64{obj.fileInfo.FileId})
+	err := f.trashItems(ctx, []int64{obj.id})
 	if err != nil {
 		return err
 	}
@@ -1207,7 +1207,7 @@ func (f *Fs) Rename(ctx context.Context, o fs.Object, newName string) (fs.Object
 	fs.Debugf(srcObj, "Renaming to '%s'", newName)
 
 	reqBody := RenameRequest{
-		FileID:   srcObj.fileInfo.FileId,
+		FileID:   srcObj.id,
 		Filename: newName,
 	}
 	bodyBytes, err := json.Marshal(reqBody)
@@ -1229,15 +1229,14 @@ func (f *Fs) Rename(ctx context.Context, o fs.Object, newName string) (fs.Object
 	// 旧路径需要被清理
 	f.clearPathCacheFor(srcObj.Remote())
 
-	// 创建新对象
+	// 修改对象
 	_, srcLeaf := path.Split(srcObj.Remote())
 	newRemote := strings.TrimSuffix(srcObj.Remote(), srcLeaf) + newName
-
-	newFileInfo := srcObj.fileInfo
-	newFileInfo.Filename = newName // 更新文件名
-	newFileInfo.UpdateAt = time.Now().Format("2006-01-02 15:04:05")
-
-	return newObject(ctx, f, newRemote, newFileInfo)
+	
+	srcObj.remote = newRemote
+	srcObj.name = newName
+	
+	return srcObj
 }
 
 
@@ -1273,7 +1272,7 @@ func (f *Fs) Move(ctx context.Context, src fs.Object, remote string) (fs.Object,
 		}
 
 		reqBody := MoveRequest{
-			FileIDs:        []int64{srcObj.fileInfo.FileId},
+			FileIDs:        []int64{srcObj.id},
 			ToParentFileID: dstParentID,
 		}
 		bodyBytes, err := json.Marshal(reqBody)
@@ -1300,11 +1299,11 @@ func (f *Fs) Move(ctx context.Context, src fs.Object, remote string) (fs.Object,
 		// 清理旧路径缓存
 		f.clearPathCacheFor(src.Remote())
 
-		// 创建并返回新对象
-		newFileInfo := srcObj.fileInfo
-		newFileInfo.ParentFileId = dstParentID
-		newFileInfo.UpdateAt = time.Now().Format("2006-01-02 15:04:05")
-		return newObject(ctx, f, remote, newFileInfo)
+		// 修改对象
+		srcObj.remote = remote
+		srcObj.parentFileId = dstParentID
+		
+		return srcObj
 	}
 
 	// --- 情况 B: 只重命名 ---
@@ -1324,7 +1323,7 @@ func (f *Fs) Move(ctx context.Context, src fs.Object, remote string) (fs.Object,
 		}
 
 		moveReqBody := MoveRequest{
-			FileIDs:        []int64{srcObj.fileInfo.FileId},
+			FileIDs:        []int64{srcObj.id},
 			ToParentFileID: dstParentID,
 		}
 		moveBodyBytes, err := json.Marshal(moveReqBody)
@@ -1372,7 +1371,7 @@ func (f *Fs) open(ctx context.Context, o *Object, options ...fs.OpenOption) (io.
 
 	// 构建请求
 	params := url.Values{}
-	params.Add("fileId", strconv.FormatInt(o.fileInfo.FileId, 10))
+	params.Add("fileId", strconv.FormatInt(o.id, 10))
 	
 	// 注意：这里的 API 是 GET 请求，我们不需要请求体
 	req, err := http.NewRequestWithContext(ctx, "GET", f.client.BaseURL+"/api/v1/file/download_info?"+params.Encode(), nil)
