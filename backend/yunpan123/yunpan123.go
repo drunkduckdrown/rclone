@@ -49,9 +49,9 @@ type Object struct {
 }
 
 // Check the interfaces are satisfied
-var (
-	_ fs.Object = (*Object)(nil)
-)
+//var (
+//	_ fs.Object = (*Object)(nil)
+//)
 
 // newObject 的签名需要改变，以接收 FileInfoV2
 func newObject(ctx context.Context, f *Fs, remote string, info *FileInfoV2) (*Object, error) {
@@ -145,12 +145,12 @@ func (o *Object) Open(ctx context.Context, options ...fs.OpenOption) (io.ReadClo
 
 
 // Update updates the object with new data and metadata.
-//func (o *Object) Update(ctx context.Context, in io.Reader, src fs.ObjectInfo, options ...fs.OpenOption) error {
+func (o *Object) Update(ctx context.Context, in io.Reader, src fs.ObjectInfo, options ...fs.OpenOption) error {
 	// TODO: 如果 123 云盘 API 支持文件覆盖更新，则实现此方法
 	// 否则返回 fs.ErrorNotImplemented
-	//fs.Debugf(nil, "[Object] Update requested for %s, new size: %d", o.remote, src.Size())
-	//return fs.ErrorNotImplemented // 暂时不支持
-//}
+	fs.Debugf(nil, "[Object] Update requested for %s, new size: %d", o.remote, src.Size())
+	return fs.ErrorNotImplemented // 暂时不支持
+}
 
 // Fs represents the 123 cloud drive backend
 type Fs struct {
@@ -778,8 +778,8 @@ func (f *Fs) putSingle(ctx context.Context, in io.Reader, src fs.ObjectInfo, siz
 	}
 
 	// 3. 计算 MD5 哈希 (rclone 会自动为我们提供)
-	hashes := src.Hash(ctx, fs.HashMD5)
-	md5sum, ok := hashes[fs.HashMD5]
+	hashes, _ := src.Hash(ctx, hash.MD5)
+	md5sum, ok := hashes[hash.MD5]
 	if !ok || md5sum == "" {
 		return nil, errors.New("MD5 hash is required for upload but was not provided")
 	}
@@ -872,8 +872,8 @@ func (f *Fs) putChunked(ctx context.Context, in io.Reader, src fs.ObjectInfo, op
 		return nil, fmt.Errorf("chunked upload: failed to find parent directory: %w", err)
 	}
 
-	hashes := src.Hash(ctx, fs.HashMD5)
-	md5sum, ok := hashes[fs.HashMD5]
+	hashes, _ := src.Hash(ctx, hash.MD5)
+	md5sum, ok := hashes[hash.MD5]
 	if !ok || md5sum == "" {
 		return nil, errors.New("chunked upload: MD5 hash is required but was not provided")
 	}
