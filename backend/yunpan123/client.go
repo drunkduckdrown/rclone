@@ -72,7 +72,7 @@ func (c *APIClient) Do(ctx context.Context, req *http.Request, requestBodyBytes 
 
 		switch resp.StatusCode {
 		case http.StatusUnauthorized: // 401
-			fs.Warningf(nil, "[APIClient] Received 401 Unauthorized. Attempting to refresh token via /renew_token...")
+			fs.Logf(nil, "[APIClient] Received 401 Unauthorized. Attempting to refresh token via /renew_token...")
 			// 关闭当前的响应体，以便可以重用连接
 			func() {
 				_, _ = io.Copy(io.Discard, resp.Body)
@@ -88,7 +88,7 @@ func (c *APIClient) Do(ctx context.Context, req *http.Request, requestBodyBytes 
 			continue
 
 		case http.StatusTooManyRequests: // 429
-			fs.Warningf(nil, "[APIClient] Received 429 Too Many Requests. Waiting (attempt %d/%d)...", i+1, maxRetries)
+			fs.Logf(nil, "[APIClient] Received 429 Too Many Requests. Waiting (attempt %d/%d)...", i+1, maxRetries)
 			// 关闭当前的响应体
 			func() {
 				_, _ = io.Copy(io.Discard, resp.Body)
@@ -99,7 +99,7 @@ func (c *APIClient) Do(ctx context.Context, req *http.Request, requestBodyBytes 
 			if waitTime > 30*time.Second { // 设置最大等待时间
 				waitTime = 30 * time.Second
 			}
-			fs.Warningf(nil, "[APIClient] Waiting %s before retry.", waitTime)
+			fs.Logf(nil, "[APIClient] Waiting %s before retry.", waitTime)
 			time.Sleep(waitTime)
 			continue // 继续循环，重试请求
 

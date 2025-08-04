@@ -12,7 +12,7 @@ import (
 
 // Register with rclone
 func init() {
-	fs.RegisterFs(&fs.RegInfo{
+	fs.Register(&fs.RegInfo{
 		Name:        "123cloud", // 后端名称，用户在 rclone config 中会看到
 		Description: "123 Cloud Drive (Baidu Cloud Family)", // 后端描述
 		NewFs:       NewFs, // 后端初始化函数，稍后实现

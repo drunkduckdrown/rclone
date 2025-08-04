@@ -525,7 +525,7 @@ func (f *Fs) Mkdir(ctx context.Context, dir string) error {
 	// 根据文档，code=1 表示目录已存在。
 	// 尽管我们已经预先检查过，但多一层保护可以处理并发创建的竞态条件。
 	if respData.Code == 1 {
-		fs.Warningf(f, "Directory '%s' was created by another process concurrently. Treating as success.", dir)
+		fs.Logf(f, "Directory '%s' was created by another process concurrently. Treating as success.", dir)
 		// 即使API报错，我们也需要尝试获取并缓存这个已存在的目录的ID
 		// 我们可以通过再次调用pathToID来强制刷新缓存
 		_, _ = f.pathToID(ctx, dir)
@@ -866,7 +866,7 @@ func (f *Fs) putChunked(ctx context.Context, in io.Reader, src fs.ObjectInfo, op
 	for {
 		select {
 		case <-ctx.Done(): // 轮询超时
-			fs.Warningf(src, "Polling for upload completion timed out after %v. Assuming success and returning an optimistic object.", pollTimeout)
+			fs.Logf(src, "Polling for upload completion timed out after %v. Assuming success and returning an optimistic object.", pollTimeout)
 			goto end_poll // 使用goto跳出循环，清晰明了
 		default:
 		}
