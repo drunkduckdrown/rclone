@@ -398,6 +398,7 @@ func (f *Fs) About(ctx context.Context) (*fs.Usage, error) {
 	usage := &fs.Usage{
 		Total: fs.NewUsageValue(totalSpace), // 总空间 = 永久空间 + 临时空间
 		Used:  fs.NewUsageValue(usedSpace),  // 已用空间
+		Free:  fs.NewUsageValue(totalSpace - usedSpace), // bytes which can be uploaded before reaching the quota
 	}
 
 	fs.Debugf(nil, "[123CloudFs] About successful: Total=%s, Used=%s", usage.Total, usage.Used)
