@@ -151,6 +151,7 @@ func (o *Object) Open(ctx context.Context, options ...fs.OpenOption) (io.ReadClo
 type Fs struct {
 	name     string            // rclone remote 的名称 (例如 "my123pan")
 	root     string            // 用户配置的根路径 (例如 "/MyFiles")
+	opt      Options           // 配置
 	pacer    *pacer.Pacer      // rclone 提供的限速器，用于控制 API 请求频率
 	client   *APIClient      // 你的 123 云盘 API 客户端
 	tokenMgr *tokenmanager.Manager // 你的 token 管理器实例
@@ -174,10 +175,15 @@ type cacheEntry struct {
 // NewFs initializes the 123 cloud drive backend
 // 这是 rclone 调用以创建文件系统实例的入口
 func NewFs(ctx context.Context, name, root string, m configmap.Mapper) (fs.Fs, error) {
-	// 1. 从 configmap.Mapper 中读取配置参数
-	cloudFunctionURL := m.Get("cloud_function_url")
-	cloudFunctionAuthToken := m.Get("cloud_function_auth_token") // 新名称
-	apiBaseURL := m.Get("api_base_url")
+	opt := new(Options)
+	err := configstruct.Set(m, opt)
+	if err != nil {
+		return nil, err
+	}
+	// 1. 从 opt 中读取配置参数
+	cloudFunctionURL := opt.cloud_function_url
+	cloudFunctionAuthToken := opt.cloud_function_auth_token // 新名称
+	apiBaseURL := opt.api_base_url
 
 	// 检查必要参数是否已提供
 	if cloudFunctionURL == "" {
@@ -258,21 +264,28 @@ func init() {
 				Required: true,
 				Advanced: false,
 		},{
-		// 云函数URL，用于获取和刷新 token
-				Name:     "api_base_url",
-				Help:     "Base URL for 123 Cloud Drive API (e.g., https://open-api.123pan.com)",
-				Required: true,
-				Advanced: false,
-				Default:  "https://open-api.123pan.com", // 假设的默认值，请根据实际情况修改
-		},{
 		// 云函数鉴权 (Bearer Token)
 				Name:     "cloud_function_auth_token", // 更改名称以更清晰
 				Help:     "Bearer token for authenticating with your cloud function.", // 帮助文本更新
 				Required: true,
 				Advanced: false,
 				Sensitive:  true, // 标记为敏感信息，rclone 会加密存储
+		},{
+		// 网盘API地址
+				Name:     "api_base_url",
+				Help:     "Base URL for 123 Cloud Drive API (e.g., https://open-api.123pan.com)",
+				Required: true,
+				Advanced: false,
+				Default:  "https://open-api.123pan.com", // 假设的默认值，请根据实际情况修改
 		}},
 	})
+}
+
+// Options defines the configuration for this backend
+type Options struct {
+	cloud_function_url              string     `config:"cloud_function_url"`
+	cloud_function_auth_token       string     `config:"cloud_function_auth_token"`
+	api_base_url                    string     `config:"api_base_url"`
 }
 
 // ------------------------------------------------------------------------------------
