@@ -22,14 +22,14 @@ import (
 
 	"github.com/rclone/rclone/fs"
 	"github.com/rclone/rclone/fs/hash"
-	//"github.com/rclone/rclone/fs/fshttp"
-	"github.com/rclone/rclone/fs/config"
-	"github.com/rclone/rclone/fs/config/obscure"
+	"github.com/rclone/rclone/fs/fshttp"
+	//"github.com/rclone/rclone/fs/config"
+	//"github.com/rclone/rclone/fs/config/obscure"
 	"github.com/rclone/rclone/fs/config/configmap"
 	"github.com/rclone/rclone/fs/config/configstruct"
 	//"github.com/rclone/rclone/fs/log"
 	//"github.com/rclone/rclone/lib/pacer"
-	"github.com/rclone/rclone/lib/rest"
+	//"github.com/rclone/rclone/lib/rest"
 
 	// 导入你的 tokenmanager 包，路径需要与你的 go.mod 模块路径一致
 	"github.com/rclone/rclone/backend/yunpan123/tokenmanager"
@@ -776,8 +776,8 @@ func (f *Fs) putSingle(ctx context.Context, in io.Reader, src fs.ObjectInfo, siz
 	}
 
 	// 3. 计算 MD5 哈希 (rclone 会自动为我们提供)
-	md5sum, _ := src.Hash(ctx, hash.MD5)
-	if !ok || md5sum == "" {
+	md5sum, err := src.Hash(ctx, hash.MD5)
+	if err != nil || md5sum == "" {
 		return nil, errors.New("MD5 hash is required for upload but was not provided")
 	}
 
@@ -869,8 +869,8 @@ func (f *Fs) putChunked(ctx context.Context, in io.Reader, src fs.ObjectInfo, op
 		return nil, fmt.Errorf("chunked upload: failed to find parent directory: %w", err)
 	}
 
-	md5sum, _ := src.Hash(ctx, hash.MD5)
-	if !ok || md5sum == "" {
+	md5sum, err := src.Hash(ctx, hash.MD5)
+	if err != nil || md5sum == "" {
 		return nil, errors.New("chunked upload: MD5 hash is required but was not provided")
 	}
 
@@ -1167,14 +1167,14 @@ func (o *Object) Remove(ctx context.Context) error {
 	//	return fmt.Errorf("not a cloud123 object: %T", o)
 	//}
 
-	fs.Debugf(obj, "Deleting file")
-	err := o.fs.trashItems(ctx, []int64{obj.id})
+	fs.Debugf(o, "Deleting file")
+	err := o.fs.trashItems(ctx, []int64{o.id})
 	if err != nil {
 		return err
 	}
 	
 	// 精确清理该文件的缓存
-	o.fs.clearPathCacheFor(obj.Remote())
+	o.fs.clearPathCacheFor(o.Remote())
 	return nil
 }
 
@@ -1418,11 +1418,12 @@ func (f *Fs) open(ctx context.Context, o *Object, options ...fs.OpenOption) (io.
 	}
 
 	// 处理 Range 请求 (断点续传和seek的关键)
-	fs.HandleRangeOption(options, downloadReq.Header)
+	fs.OpenOptionAddHTTPHeaders(req.Header, options)
 
 	// **重要**: 这个请求是发往 CDN 的，不需要我们自己的认证头。
-	// 所以我们使用底层的 http.Client，而不是 f.client.Do
-	downloadResp, err := f.client.Client.Do(downloadReq)
+	// 所以我们使用fshttp，而不是 f.client.Do
+	dl_client := fshttp.NewClient(ctx)
+	downloadResp, err := dl_client.Do(downloadReq)
 	if err != nil {
 		return nil, fmt.Errorf("open: failed to start download: %w", err)
 	}
