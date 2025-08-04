@@ -26,6 +26,28 @@ jobs:
         with:
           go-version: '1.24.0'
 
+      # ------------------- 新增的诊断步骤 -------------------
+      - name: Diagnose 'fs' identifier
+        id: diagnose
+        shell: powershell
+        continue-on-error: true # 即使此步骤失败，也继续执行后续步骤
+        run: |
+          Write-Host "Diagnosing all occurrences of 'fs' identifier in the backend..."
+          # 这个命令会列出 backend/yunpan123 目录下所有 .go 文件中 'fs' 的定义位置
+          # 我们用 go list 来做这件事，它能理解 Go 的语法
+          go list -f '{{range .GoFiles}} {{$.Dir}}/{{.}} {{end}}' ./backend/yunpan123/... | ForEach-Object {
+            $filePath = $_
+            Write-Host "--- Analyzing file: $filePath ---"
+            # 使用 go tool astrap 来查找所有 'fs' 标识符的定义
+            # 如果 go tool astrap 不可用，可以用其他文本搜索工具，但 go tool 更精确
+            # 这是一个更简单的文本搜索方法，适用于所有环境
+            Select-String -Path $filePath -Pattern '\bfs\b' -AllMatches | ForEach-Object {
+              Write-Host "Found 'fs' at $($_.LineNumber): $($_.Line)"
+            }
+          }
+          Write-Host "--- End of diagnosis ---"
+      # ----------------------------------------------------
+
       # 3. 模仿官方方式，编译 rclone
       - name: Build rclone for Windows (Official Method)
         id: build
