@@ -137,16 +137,16 @@ type TrashRequest struct {
 	FileIDs []int64 `json:"fileIDs"`
 }
 
-// MoveRequest 对应 /api/v1/file/move 的请求体
+// MoveRequest 定义了调用移动 API 时发送的 JSON body
 type MoveRequest struct {
-	FileIDs        []int64 `json:"fileIDs"`
-	ToParentFileID int64   `json:"toParentFileID"`
+	FileIDs        []int64 `json:"fileIds"` // API 对文件和文件夹一视同仁
+	ToParentFileID int64   `json:"toParentFileId"`
 }
-
-// RenameRequest 对应 /api/v1/file/name 的请求体
+ 
+// RenameRequest 定义了调用重命名 API 时发送的 JSON body
 type RenameRequest struct {
 	FileID   int64  `json:"fileId"`
-	Filename string `json:"fileName"`
+	Filename string `json:"filename"`
 }
 
 // --- 文件下载 (Open) 相关的 API 类型 ---

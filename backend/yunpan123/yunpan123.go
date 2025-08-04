@@ -1210,168 +1210,162 @@ func (f *Fs) Purge(ctx context.Context, remote string) error {
 	return f.Rmdir(ctx, remote)
 }
 
-// Rename renames a file
-func (f *Fs) Rename(ctx context.Context, o fs.Object, newName string) (fs.Object, error) {
-	srcObj, ok := o.(*Object)
-	if !ok {
-		return nil, fmt.Errorf("not a cloud123 object: %T", o)
+	return nil
+}
+ 
+// internalMove 是一个通用的内部函数，用于将任何项目（文件或目录）移动到新的父目录。
+func (f *Fs) internalMove(ctx context.Context, itemID int64, dstParentPath string) error {
+	fs.Debugf(nil, "internalMove: moving item ID %d to parent path '%s'", itemID, dstParentPath)
+	dstParentID, err := f.pathToID(ctx, dstParentPath)
+	if err != nil {
+		return fmt.Errorf("move: failed to find destination directory '%s': %w", dstParentPath, err)
 	}
+	reqBody := MoveRequest{
+		FileIDs:        []int64{itemID},
+		ToParentFileID: dstParentID,
+	}
+	bodyBytes, err := json.Marshal(reqBody)
+	if err != nil {
+		return fmt.Errorf("move: failed to marshal request: %w", err)
+	}
+	req, err := http.NewRequestWithContext(ctx, "POST", f.client.BaseURL+"/api/v1/file/move", bytes.NewReader(bodyBytes))
+	if err != nil {
+		return fmt.Errorf("move: failed to create request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := f.client.Do(ctx, req, bodyBytes)
+	if err != nil {
+		return fmt.Errorf("move: api call failed: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= 400 {
+		return fmt.Errorf("move: api returned error status %d: %s", resp.StatusCode, resp.Status)
+	}
+	return nil
+}
 
-	fs.Debugf(srcObj, "Renaming to '%s'", newName)
-
+// internalRename 是一个通用的内部函数，用于重命名任何项目（文件或目录）。
+func (f *Fs) internalRename(ctx context.Context, itemID int64, newName string) error {
+	fs.Debugf(nil, "internalRename: renaming item ID %d to '%s'", itemID, newName)
 	reqBody := RenameRequest{
-		FileID:   srcObj.id,
+		FileID:   itemID,
 		Filename: newName,
 	}
 	bodyBytes, err := json.Marshal(reqBody)
-	if err != nil { return nil, fmt.Errorf("rename: failed to marshal request: %w", err) }
-
-	req, err := http.NewRequestWithContext(ctx, "PUT", f.client.BaseURL+"/api/v1/file/name", bytes.NewReader(bodyBytes))
-	if err != nil { return nil, fmt.Errorf("rename: failed to create request: %w", err) }
-	req.Header.Set("Content-Type", "application/json")
-
-	resp, err := f.client.Do(ctx, req, bodyBytes)
-	if err != nil { return nil, fmt.Errorf("rename: api call failed: %w", err) }
-	defer resp.Body.Close()
-
-	if resp.StatusCode >= 400 {
-		return nil, fmt.Errorf("rename: api returned error status: %s", resp.Status)
+	if err != nil {
+		return fmt.Errorf("rename: failed to marshal request: %w", err)
 	}
-	
-	// --- 清理缓存并返回新对象 ---
-	// 旧路径需要被清理
-	f.clearPathCacheFor(srcObj.Remote())
-
-	// 修改对象
-	_, srcLeaf := path.Split(srcObj.Remote())
-	newRemote := strings.TrimSuffix(srcObj.Remote(), srcLeaf) + newName
-	
-	srcObj.remote = newRemote
-	srcObj.name = newName
-	
-	return srcObj,nil
+	req, err := http.NewRequestWithContext(ctx, "PUT", f.client.BaseURL+"/api/v1/file/name", bytes.NewReader(bodyBytes))
+	if err != nil {
+		return fmt.Errorf("rename: failed to create request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := f.client.Do(ctx, req, bodyBytes)
+	if err != nil {
+		return fmt.Errorf("rename: api call failed: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= 400 {
+		return fmt.Errorf("rename: api returned error status %d: %s", resp.StatusCode, resp.Status)
+	}
+	return nil
 }
 
-
-// Move moves and/or renames a file or directory.
-// It intelligently calls the move and rename APIs based on the user's intent.
+// Move moves and/or renames a file.
 func (f *Fs) Move(ctx context.Context, src fs.Object, remote string) (fs.Object, error) {
 	srcObj, ok := src.(*Object)
 	if !ok {
 		return nil, fmt.Errorf("not a cloud123 object: %T", src)
 	}
-
+ 
 	srcPath, srcLeaf := path.Split(src.Remote())
 	dstPath, dstLeaf := path.Split(remote)
 	srcPath = strings.TrimRight(srcPath, "/")
 	dstPath = strings.TrimRight(dstPath, "/")
-
-	// 判断操作类型
+ 
 	isMove := (srcPath != dstPath)
 	isRename := (srcLeaf != dstLeaf)
-
-	// --- 情况 D: 无操作 ---
+ 
 	if !isMove && !isRename {
 		fs.Debugf(src, "Move: source and destination are identical, doing nothing.")
 		return src, nil
 	}
-
-	// --- 情况 A: 只移动 ---
-	if isMove && !isRename {
-		fs.Debugf(src, "Moving from '%s' to '%s'", srcPath, dstPath)
-		dstParentID, err := f.pathToID(ctx, dstPath)
+ 
+	if isMove {
+		fs.Debugf(src, "Moving file from '%s' to '%s'", srcPath, dstPath)
+		err := f.internalMove(ctx, srcObj.id, dstPath)
 		if err != nil {
-			return nil, fmt.Errorf("move: failed to find destination directory '%s': %w", dstPath, err)
+			return nil, err
 		}
-
-		reqBody := MoveRequest{
-			FileIDs:        []int64{srcObj.id},
-			ToParentFileID: dstParentID,
-		}
-		bodyBytes, err := json.Marshal(reqBody)
+	}
+ 
+	if isRename {
+		fs.Debugf(src, "Renaming file to '%s'", dstLeaf)
+		err := f.internalRename(ctx, srcObj.id, dstLeaf)
 		if err != nil {
-			return nil, fmt.Errorf("move: failed to marshal request: %w", err)
+			return nil, fmt.Errorf("rename step failed after move: %w", err)
 		}
-
-		req, err := http.NewRequestWithContext(ctx, "POST", f.client.BaseURL+"/api/v1/file/move", bytes.NewReader(bodyBytes))
-		if err != nil {
-			return nil, fmt.Errorf("move: failed to create request: %w", err)
-		}
-		req.Header.Set("Content-Type", "application/json")
-
-		resp, err := f.client.Do(ctx, req, bodyBytes)
-		if err != nil {
-			return nil, fmt.Errorf("move: api call failed: %w", err)
-		}
-		defer resp.Body.Close()
-
-		if resp.StatusCode >= 400 {
-			return nil, fmt.Errorf("move: api returned error status: %s", resp.Status)
-		}
-
-		// 清理旧路径缓存
-		f.clearPathCacheFor(src.Remote())
-
-		// 修改对象
-		srcObj.remote = remote
-		srcObj.parentFileId = dstParentID
-		
-		return srcObj,nil
 	}
 
-	// --- 情况 B: 只重命名 ---
-	if !isMove && isRename {
-		fs.Debugf(src, "Renaming to '%s' in place", dstLeaf)
-		return f.Rename(ctx, src, dstLeaf)
+	srcObj.remote = remote
+	srcObj.name = dstLeaf
+	return srcObj, nil
+}
+
+// DirMove moves and/or renames a directory.
+// This is the standard implementation for the fs.DirMover interface.
+func (f *Fs) DirMove(ctx context.Context, src fs.Fs, srcRemote, dstRemote string) error {
+	srcFs, ok := src.(*Fs)
+	if !ok {
+		fs.Debugf(src, "Can't move directory - not same remote type")
+		return fs.ErrorCantDirMove
 	}
-
-	// --- 情况 C: 既移动又重命名 ---
-	if isMove && isRename {
-		fs.Debugf(src, "Moving from '%s' to '%s' and renaming to '%s'", srcPath, dstPath, dstLeaf)
-
-		// 1. 移动
-		dstParentID, err := f.pathToID(ctx, dstPath)
-		if err != nil {
-			return nil, fmt.Errorf("move-rename: failed to find destination directory '%s': %w", dstPath, err)
+ 
+	// 首先，我们需要通过源路径找到源目录的 ID
+	srcID, err := srcFs.pathToID(ctx, srcRemote)
+	if err != nil {
+		// 如果找不到源目录，返回一个标准错误
+		if errors.Is(err, fs.ErrorObjectNotFound) {
+			return fs.ErrorDirNotFound
 		}
-
-		moveReqBody := MoveRequest{
-			FileIDs:        []int64{srcObj.id},
-			ToParentFileID: dstParentID,
-		}
-		moveBodyBytes, err := json.Marshal(moveReqBody)
-		if err != nil {
-			return nil, fmt.Errorf("move-rename: failed to marshal move request: %w", err)
-		}
-
-		moveReq, err := http.NewRequestWithContext(ctx, "POST", f.client.BaseURL+"/api/v1/file/move", bytes.NewReader(moveBodyBytes))
-		if err != nil {
-			return nil, fmt.Errorf("move-rename: failed to create move request: %w", err)
-		}
-		moveReq.Header.Set("Content-Type", "application/json")
-
-		moveResp, err := f.client.Do(ctx, moveReq, moveBodyBytes)
-		if err != nil {
-			return nil, fmt.Errorf("move-rename: move api call failed: %w", err)
-		}
-		defer moveResp.Body.Close()
-
-		if moveResp.StatusCode >= 400 {
-			return nil, fmt.Errorf("move-rename: move api returned error status: %s", moveResp.Status)
-		}
-
-		// 移动成功后，立即清理旧路径缓存
-		f.clearPathCacheFor(src.Remote())
-
-		// 2. 重命名
-		// 我们现在对同一个文件对象（它的FileId没变）执行重命名操作。
-		// f.Rename 方法会处理自己的缓存清理和新对象创建。
-		fs.Debugf(src, "Move successful, now renaming to '%s'", dstLeaf)
-		return f.Rename(ctx, src, dstLeaf)
+		return fmt.Errorf("DirMove: failed to find source directory '%s': %w", srcRemote, err)
 	}
-
-	// 这是一个备用错误，理论上永远不会被触发，因为上面的逻辑覆盖了所有情况。
-	return nil, errors.New("internal logic error in Move function: no action taken")
+ 
+	srcPath, srcLeaf := path.Split(srcRemote)
+	dstPath, dstLeaf := path.Split(dstRemote)
+	srcPath = strings.TrimRight(srcPath, "/")
+	dstPath = strings.TrimRight(dstPath, "/")
+ 
+	isMove := (srcPath != dstPath)
+	isRename := (srcLeaf != dstLeaf)
+ 
+	if !isMove && !isRename {
+		fs.Debugf(srcFs, "DirMove: source and destination are identical, doing nothing for '%s'", srcRemote)
+		return nil
+	}
+ 
+	// --- 移动操作 (如果需要) ---
+	if isMove {
+		fs.Debugf(srcFs, "Moving directory from '%s' to '%s'", srcPath, dstPath)
+		err := f.internalMove(ctx, srcID, dstPath)
+		if err != nil {
+			return err
+		}
+	}
+ 
+	// --- 重命名操作 (如果需要) ---
+	if isRename {
+		fs.Debugf(srcFs, "Renaming directory to '%s'", dstLeaf)
+		err := f.internalRename(ctx, srcID, dstLeaf)
+		if err != nil {
+			return fmt.Errorf("rename step failed after move: %w", err)
+		}
+	}
+ 
+	// --- 成功处理 ---
+	// 清理旧路径的缓存。对于目录移动，这非常重要。
+	f.clearPathCacheFor(srcRemote)
+	return nil
 }
 
 
