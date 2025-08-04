@@ -30,7 +30,7 @@ import (
 	"github.com/rclone/rclone/fs/config/configmap"
 	"github.com/rclone/rclone/fs/config/configstruct"
 	//"github.com/rclone/rclone/fs/log"
-	"github.com/rclone/rclone/lib/pacer"
+	//"github.com/rclone/rclone/lib/pacer"
 	"github.com/rclone/rclone/lib/rest"
 
 	// 导入你的 tokenmanager 包，路径需要与你的 go.mod 模块路径一致
@@ -152,7 +152,7 @@ type Fs struct {
 	name     string            // rclone remote 的名称 (例如 "my123pan")
 	root     string            // 用户配置的根路径 (例如 "/MyFiles")
 	opt      Options           // 配置
-	pacer    *pacer.Pacer      // rclone 提供的限速器，用于控制 API 请求频率
+	// pacer    *pacer.Pacer      // rclone 提供的限速器，用于控制 API 请求频率
 	client   *APIClient      // 你的 123 云盘 API 客户端
 	tokenMgr *tokenmanager.Manager // 你的 token 管理器实例
 	features *fs.Features // rclone 后端支持的特性
@@ -219,7 +219,8 @@ func NewFs(ctx context.Context, name, root string, m configmap.Mapper) (fs.Fs, e
 	f := &Fs{
 		name:     name,
 		root:     root,
-		pacer:    pacer.New().SetMinSleep(10 * time.Millisecond),
+		opt:      opt,
+		// pacer:    pacer.New().SetMinSleep(10 * time.Millisecond),
 		client:   apiClient,
 		tokenMgr: tokenMgr,
 		pathCache:    make(map[string]*cacheEntry),
@@ -515,9 +516,9 @@ func (f *Fs) Hashes() hash.Set {
 }
 
 // Pacer returns the pacer for this Fs
-func (f *Fs) Pacer() *pacer.Pacer {
-	return f.pacer
-}
+//func (f *Fs) Pacer() *pacer.Pacer {
+//	return f.pacer
+//}
 
 // About gets quota information from the Fs
 func (f *Fs) About(ctx context.Context) (*fs.Usage, error) {
