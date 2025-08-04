@@ -232,7 +232,7 @@ func NewFs(ctx context.Context, name, root string, m configmap.Mapper) (fs.Fs, e
 		cacheTTL:     10 * time.Second, // *** 设置缓存TTL为10秒 ***
 	}
 	// 根目录的缓存永不过期，或者给一个很长的过期时间
-	f.pathCache[""] = &cacheEntry{id: 0, expiresAt: time.Now().Add(time.Year)}
+	f.pathCache[""] = &cacheEntry{id: 0, expiresAt: time.Now().AddDate(1, 0, 0)}
 	
 	// 启动后台缓存清理协程
 	go f.startCacheCleaner(ctx)
@@ -244,7 +244,6 @@ func NewFs(ctx context.Context, name, root string, m configmap.Mapper) (fs.Fs, e
 //		Put:           f.Put,
 //		Mkdir:         f.Mkdir,
 //		Rmdir:         f.Rmdir,
-//		Remove:        f.Remove,
 //		Purge:         f.Purge,
 //		Move:          f.Move,
 //		// Rename:        f.Rename,
@@ -1166,20 +1165,20 @@ func (f *Fs) clearPathCacheFor(remote string) {
 }
 
 // Remove removes a single file.
-func (f *Fs) Remove(ctx context.Context, o fs.Object) error {
+func (o *Object) Remove(ctx context.Context) error {
 	obj, ok := o.(*Object)
 	if !ok {
 		return fmt.Errorf("not a cloud123 object: %T", o)
 	}
 
 	fs.Debugf(obj, "Deleting file")
-	err := f.trashItems(ctx, []int64{obj.id})
+	err := o.fs.trashItems(ctx, []int64{obj.id})
 	if err != nil {
 		return err
 	}
 	
 	// 精确清理该文件的缓存
-	f.clearPathCacheFor(obj.Remote())
+	o.fs.clearPathCacheFor(obj.Remote())
 	return nil
 }
 
