@@ -1450,6 +1450,6 @@ var (
 	_ fs.Abouter        = &Fs{}
 	_ fs.Purger         = &Fs{}
 	_ fs.Mover          = &Fs{}
-	//_ fs.DirMover       = &Fs{}
+	_ fs.DirMover       = &Fs{}
 	_ fs.Object         = &Object{}
 )
