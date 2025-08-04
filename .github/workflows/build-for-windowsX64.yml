@@ -26,34 +26,6 @@ jobs:
         with:
           go-version: '1.24.0'
 
-      # ------------------- 修正后的诊断步骤 -------------------
-      - name: Diagnose 'fs' identifier
-        id: diagnose
-        shell: powershell
-        continue-on-error: true
-        run: |
-          Write-Host "Diagnosing all occurrences of 'fs' identifier in the backend..."
-          
-          # 修正1: 去掉了格式化字符串开头的空格
-          # 修正2: 使用 .Trim() 清理路径两端的任何空白字符
-          go list -f '{{range .GoFiles}}{{.Dir}}/{{.}}{{println}}{{end}}' ./backend/yunpan123/... | ForEach-Object {
-            $filePath = $_.Trim()
-            if (-not ($filePath)) { return } # 跳过空行
-
-            Write-Host "--- Analyzing file: $filePath ---"
-            
-            # 确保文件存在再进行搜索
-            if (Test-Path -Path $filePath -PathType Leaf) {
-              Select-String -Path $filePath -Pattern '\bfs\b' -AllMatches | ForEach-Object {
-                Write-Host "Found 'fs' at $($_.LineNumber): $($_.Line)"
-              }
-            } else {
-              Write-Host "File not found or is not a file: $filePath"
-            }
-          }
-          Write-Host "--- End of diagnosis ---"
-      # ----------------------------------------------------
-
 
       # 3. 模仿官方方式，编译 rclone
       - name: Build rclone for Windows (Official Method)
