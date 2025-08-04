@@ -403,11 +403,64 @@ func (f *Fs) About(ctx context.Context) (*fs.Usage, error) {
 	return usage, nil
 }
 
-// NewObject finds the Object at remote.
+// NewObject finds the Object at remote. It is a mandatory interface method.
+// *** 这是考虑到文件和目录可以同名的最终版本 ***
 func (f *Fs) NewObject(ctx context.Context, remote string) (fs.Object, error) {
-	fs.Debugf(nil, "[123CloudFs] Getting object metadata for: %s", remote)
-	return nil, fs.ErrorNotImplemented
+	fs.Debugf(f, "NewObject called for: %s", remote)
+
+	// 1. 分割路径 (不变)
+	parentPath, leafName := path.Split(remote)
+	parentPath = strings.TrimRight(parentPath, "/")
+	if leafName == "" {
+		return nil, fs.ErrorIsFile
+	}
+
+	// 2. 获取父目录 ID (现在 pathToID 已经很智能了)
+	parentID, err := f.pathToID(ctx, parentPath)
+	if err != nil {
+		if errors.Is(err, fs.ErrorDirNotFound) {
+			return nil, fs.ErrorObjectNotFound
+		}
+		return nil, fmt.Errorf("newobject: failed to find parent directory for '%s': %w", remote, err)
+	}
+	fs.Debugf(f, "Parent path '%s' resolved to ID: %d", parentPath, parentID)
+
+	// 3. 循环分页列出父目录的内容，直到找到目标文件。
+	lastFileID := int64(0)
+	for {
+		respData, err := f.listDir(ctx, parentID, parentPath, lastFileID)
+		if err != nil {
+			return nil, err
+		}
+
+		// 遍历当前页返回的文件列表
+		for i := range respData.Data.FileList {
+			fileInfo := &respData.Data.FileList[i]
+
+			// *** 核心逻辑：当名称匹配时，检查类型 ***
+			if fileInfo.Filename == leafName {
+				// 我们只对文件 (Type != 1) 感兴趣
+				if fileInfo.Type != 1 {
+					// 找到了文件！立即创建并返回。
+					fs.Debugf(f, "Found object (file) '%s' with ID %d", leafName, fileInfo.FileId)
+					return newObject(ctx, f, remote, fileInfo)
+				}
+				// 如果找到了同名目录，我们忽略它，继续寻找可能的同名文件。
+				// 因为 API 可能在同一页或不同页返回同名的文件和目录。
+			}
+		}
+
+		// 检查是否还有更多页面需要查找
+		lastFileID = respData.Data.LastFileId
+		if lastFileID == -1 {
+			// 已经遍历完父目录的所有内容，但没有找到匹配的 *文件*。
+			// 即使可能存在同名目录，但对于 NewObject 来说，目标文件就是未找到。
+			fs.Debugf(f, "Object (file) not found after listing entire directory: %s", remote)
+			return nil, fs.ErrorObjectNotFound
+		}
+	}
 }
+
 
 // Mkdir makes the directory
 func (f *Fs) Mkdir(ctx context.Context, dir string) error {
