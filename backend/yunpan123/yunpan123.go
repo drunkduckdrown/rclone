@@ -355,7 +355,7 @@ func (f *Fs) listDir(ctx context.Context, parentID int64, parentPath string, las
 	defer f.pathCacheMu.Unlock()
 	for i := range respData.Data.FileList {
 		fileInfo := &respData.Data.FileList[i]
-		if fileInfo.Type == 1 { // 只缓存目录
+		if fileInfo.Type == 1 && fileInfo.Trashed == 0{ // 只缓存目录,未删除的
 			remotePath := path.Join(parentPath, fileInfo.Filename)
 			entry, exists := f.pathCache[remotePath]
 			if !exists || time.Now().After(entry.expiresAt) {
