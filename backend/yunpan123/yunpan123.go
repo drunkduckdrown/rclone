@@ -1085,6 +1085,11 @@ func (f *Fs) Put(ctx context.Context, in io.Reader, src fs.ObjectInfo, options .
 	return f.putSingle(ctx, in, src, size, options...)
 }
 
+// PutStream uploads to the remote path with the modTime given of indeterminate size
+func (f *Fs) PutStream(ctx context.Context, in io.Reader, src fs.ObjectInfo, options ...fs.OpenOption) (fs.Object, error) {
+	return f.Put(ctx, in, src, options...)
+}
+
 // trashItems a list of file or directory IDs.
 // This is the shared helper function for Remove, Rmdir, and Purge.
 func (f *Fs) trashItems(ctx context.Context, fileIDs []int64) error {
@@ -1444,10 +1449,11 @@ func (f *Fs) open(ctx context.Context, o *Object, options ...fs.OpenOption) (io.
 
 // Check the interfaces are satisfied
 var (
-	_ fs.Fs             = &Fs{}
-	_ fs.Abouter        = &Fs{}
-	_ fs.Purger         = &Fs{}
-	_ fs.Mover          = &Fs{}
-	_ fs.DirMover       = &Fs{}
-	_ fs.Object         = &Object{}
+	_ fs.Fs             = (*Fs)(nil)
+	_ fs.Abouter        = (*Fs)(nil)
+	_ fs.PutStreamer    = (*Fs)(nil)
+	_ fs.Purger         = (*Fs)(nil)
+	_ fs.Mover          = (*Fs)(nil)
+	_ fs.DirMover       = (*Fs)(nil)
+	_ fs.Object         = (*Object)(nil)
 )
