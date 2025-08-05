@@ -239,13 +239,6 @@ func NewFs(ctx context.Context, name, root string, m configmap.Mapper) (fs.Fs, e
 	// 7. 定义后端支持的特性 (后续会详细实现)
 	f.features = (&fs.Features{
 		ReadMimeType:  false,
-//		Put:           f.Put,
-//		Mkdir:         f.Mkdir,
-//		Rmdir:         f.Rmdir,
-//		Purge:         f.Purge,
-//		Move:          f.Move,
-//		// Rename:        f.Rename,
-//		About:         f.About,
 	}).Fill(ctx, f)
 
 	fs.Debugf(nil, "[123CloudFs] Backend initialized successfully.")
@@ -412,8 +405,9 @@ func (f *Fs) pathToID(ctx context.Context, dirPath string) (int64, error) {
 
 		// 在返回的数据中寻找我们需要的那个目录
 		for _, fileInfo := range respData.Data.FileList {
-			if fileInfo.Filename == baseName && fileInfo.Type == 1 {
+			if fileInfo.Filename == baseName && fileInfo.Type == 1 && fileInfo.Trashed == 0{
 				// 找到了！listDir 已经帮我们把这个 ID 和它的同级目录都缓存了。
+				// fileInfo.Trashed == 0非常重要
 				return fileInfo.FileId, nil
 			}
 		}
