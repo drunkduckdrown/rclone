@@ -997,7 +997,7 @@ end_poll:
 
 // Put uploads a file. `duplicate=1` (rename).
 func (f *Fs) Put(ctx context.Context, in io.Reader, src fs.ObjectInfo, options ...fs.OpenOption) (fs.Object, error) {
-	const singleUploadCutoff = 200 * 1024 * 1024
+	const singleUploadCutoff = 16 * 1024 * 1024
 	const duplicatePolicyRename = 1
 
 	if src.Size() < 0 || src.Size() > singleUploadCutoff {
@@ -1010,7 +1010,7 @@ func (f *Fs) Put(ctx context.Context, in io.Reader, src fs.ObjectInfo, options .
 
 // Update uploads a file to overwrite. `duplicate=2` (overwrite).
 func (f *Fs) Update(ctx context.Context, in io.Reader, src fs.ObjectInfo, options ...fs.OpenOption) (fs.Object, error) {
-	const singleUploadCutoff = 200 * 1024 * 1024
+	const singleUploadCutoff = 16 * 1024 * 1024
 	const duplicatePolicyOverwrite = 2
 
 	// To overwrite, we must first delete the existing object(s) with the same name.
