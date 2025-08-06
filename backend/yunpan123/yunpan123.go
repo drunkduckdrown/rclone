@@ -166,7 +166,8 @@ type Fs struct {
 	opt      Options           // 配置
 	ci       *fs.ConfigInfo // global config
 	pacer    *pacer.Pacer      // rclone 提供的限速器，用于控制 API 请求频率
-	client   *APIClient      // 你的 123 云盘 API 客户端
+	//client   *APIClient      // 你的 123 云盘 API 客户端
+	rest     *rest.Client      // *** 新增此行 ***
 	tokenMgr *tokenmanager.Manager // 你的 token 管理器实例
 	features *fs.Features // rclone 后端支持的特性
 	
@@ -1176,7 +1177,7 @@ func (f *Fs) Put(ctx context.Context, in io.Reader, src fs.ObjectInfo, options .
 		return f.putChunked(ctx, in, src, duplicatePolicyRename)
 	}
  
-	fs.Debugf(src, "使用单文件上传 (大小: %s)", fs.SizeSuffix(src.zise()))
+	fs.Debugf(src, "使用单文件上传 (大小: %s)", fs.SizeSuffix(src.Size()))
 	// putSingle 是你的单文件上传实现
 	return f.putSingle(ctx, in, src, duplicatePolicyRename)
 }
@@ -1255,8 +1256,8 @@ func (f *Fs) trashItems(ctx context.Context, fileIDs []int64) error {
 			return nil, fmt.Errorf("failed to call trash api: %w", err)
 		}
 
-		if CommonResponse.Code != 0 {
-			return fmt.Errorf("trash failed: api returned error for ids %v, code: %d, message: %s", batch, CommonResponse.Code, CommonResponse.Msg)
+		if respData.Code != 0 {
+			return fmt.Errorf("trash failed: api returned error for ids %v, code: %d, message: %s", batch, respData.Code, respData.Msg)
 		}
 	}
 
@@ -1371,8 +1372,8 @@ func (f *Fs) internalMove(ctx context.Context, itemID int64, dstParentPath strin
 		return nil, fmt.Errorf("failed to call move api: %w", err)
 	}
 	
-	if CommonResponse.Code != 0 {
-		return fmt.Errorf("move failed: api returned error for ids %v, code: %d, message: %s", batch, CommonResponse.Code, CommonResponse.Msg)
+	if respData.Code != 0 {
+		return fmt.Errorf("move failed: api returned error for id, code: %d, message: %s", respData.Code, respData.Msg)
 	}
 	return nil
 }
@@ -1403,8 +1404,8 @@ func (f *Fs) internalRename(ctx context.Context, itemID int64, newName string) e
 		return nil, fmt.Errorf("failed to call move api: %w", err)
 	}
 	
-	if CommonResponse.Code != 0 {
-		return fmt.Errorf("rename failed: api returned error for id %d, code: %d, message: %s", itemID, CommonResponse.Code, CommonResponse.Msg)
+	if respData.Code != 0 {
+		return fmt.Errorf("rename failed: api returned error for id %d, code: %d, message: %s", itemID, respData.Code, respData.Msg)
 	}
 	return nil
 }
@@ -1444,6 +1445,8 @@ func (f *Fs) Move(ctx context.Context, src fs.Object, remote string) (fs.Object,
 			return nil, fmt.Errorf("rename step failed after move: %w", err)
 		}
 	}
+	// *** 新增缓存清理 ***
+	f.clearPathCacheFor(src.Remote())
 
 	srcObj.remote = remote
 	srcObj.name = dstLeaf
@@ -1656,7 +1659,7 @@ func (f *Fs) shouldRetry(resp *http.Response, err error) (bool, error) {
 				fs.Debugf(nil, "API业务码401：Token可能已过期，尝试续期...")
 				// 注意：这里我们无法访问 `ctx`，所以假设 GetAndStoreToken 内部能处理。
 				// 如果它需要ctx，您必须修改 shouldRetry 的函数签名。
-				if tokenErr := f.tokenMgr.GetAndStoreToken(nil, "/renew_token"); tokenErr != nil {
+				if tokenErr := f.tokenMgr.GetAndStoreToken("/renew_token"); tokenErr != nil {
 					// Token续期失败，这是一个致命错误，终止重试。
 					return false, fmt.Errorf("token续期失败，终止操作: %w", tokenErr)
 				}
