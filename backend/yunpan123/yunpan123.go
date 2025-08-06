@@ -842,7 +842,7 @@ func (f *Fs) putSingle(ctx context.Context, in io.Reader, src fs.ObjectInfo, dup
 		// 3. 执行请求
 		resp, doErr := f.rest.Call(ctx, &opts)
 		if resp.StatusCode != http.StatusOK{
-			fs.Debugf("单步上传状态码: %d, %w", resp.StatusCode, doErr)
+			fs.Debugf(src, "单步上传状态码: %d, %w", resp.StatusCode, doErr)
 			if doErr !=nil{
 				defer resp.Body.Close()
 				return f.shouldRetry(resp, doErr)
