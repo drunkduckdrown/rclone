@@ -11,11 +11,11 @@ import (
 
 type CommonResponse struct {
 	Code int    `json:"code"` // 假设是 API 返回的状态码，0表示成功
-	Msg  string `json:"msg"`  // 假设是 API 返回的消息
+	Message  string `json:"message"`  // 假设是 API 返回的消息
 	Data interface{} `json:"data"` // 具体数据部分，通常是嵌套的
 }
 
-// baseResponse 是所有API响应共有的基础结构，用于解析code和msg
+// baseResponse 是所有API响应共有的基础结构，用于解析code和message
 type baseResponse struct {
 	Code    int    `json:"code"`
 	Message string `json:"message"`
@@ -26,7 +26,7 @@ type baseResponse struct {
 // UserInfoResponse 对应 /api/v1/user/info API 的响应
 type UserInfoResponse struct {
 	Code int    `json:"code"`
-	Msg  string `json:"msg"`
+	Message  string `json:"message"`
 	Data struct {
 		SpaceUsed      int64 `json:"spaceUsed"`      // 已用空间，单位字节
 		SpacePermanent int64 `json:"spacePermanent"` // 永久空间，单位字节
@@ -160,7 +160,7 @@ type RenameRequest struct {
 // 假设下载 API 返回一个临时的下载链接
 type DownloadURLResponse struct {
 	Code int    `json:"code"`
-	Msg  string `json:"msg"`
+	Message  string `json:"message"`
 	Data struct {
 		URL string `json:"url"` // 文件的下载链接
 		// Other fields like "expireTime" for the URL
@@ -171,7 +171,7 @@ type DownloadURLResponse struct {
 // 假设上传 API 需要一些预签名 URL 或分块信息
 type UploadInitResponse struct {
 	Code int    `json:"code"`
-	Msg  string `json:"msg"`
+	Message  string `json:"message"`
 	Data struct {
 		UploadID string `json:"uploadId"` // 分块上传ID
 		Parts    []struct {
@@ -185,7 +185,7 @@ type UploadInitResponse struct {
 // --- 创建目录 (Mkdir) 相关的 API 类型 ---
 type CreateFolderResponse struct {
 	Code int    `json:"code"`
-	Msg  string `json:"msg"`
+	Message  string `json:"message"`
 	Data struct {
 		ID       string `json:"id"`
 		Name     string `json:"name"`

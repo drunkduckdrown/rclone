@@ -1185,15 +1185,15 @@ func (o *Object) Update(ctx context.Context, in io.Reader, src fs.ObjectInfo, op
 	if src.Size() < 0 || src.Size() > singleUploadCutoff {
 		fs.Debugf(src, "Using chunked upload for update (size: %d)", src.Size())
 		new_o, err := o.fs.putChunked(ctx, in, src, duplicatePolicyOverwrite)
-		if err == nil{
-			o = &new_o
-		}
-		return err
 	}
-	fs.Debugf(src, "Using single part upload for update (size: %d)", src.Size())
-	new_o, err := o.fs.putSingle(ctx, in, src, duplicatePolicyOverwrite)
+	else{
+		fs.Debugf(src, "Using single part upload for update (size: %d)", src.Size())
+		new_o, err := o.fs.putSingle(ctx, in, src, duplicatePolicyOverwrite)
+	}
+	
 	if err == nil{
-		o = &new_o
+		newObj, ok := new_o.(*Object)
+		if ok {*o = *newObj}
 	}
 	return err
 }
@@ -1231,7 +1231,7 @@ func (f *Fs) trashItems(ctx context.Context, fileIDs []int64) error {
 		}
 
 		if respData.Code != 0 {
-			return fmt.Errorf("trash failed: api returned error for ids %v, code: %d, message: %s", batch, respData.Code, respData.Msg)
+			return fmt.Errorf("trash failed: api returned error for ids %v, code: %d, message: %s", batch, respData.Code, respData.Message)
 		}
 	}
 
@@ -1345,7 +1345,7 @@ func (f *Fs) internalMove(ctx context.Context, itemID int64, dstParentPath strin
 	}
 	
 	if respData.Code != 0 {
-		return fmt.Errorf("move failed: api returned error for id, code: %d, message: %s", respData.Code, respData.Msg)
+		return fmt.Errorf("move failed: api returned error for id, code: %d, message: %s", respData.Code, respData.Message)
 	}
 	return nil
 }
@@ -1358,8 +1358,9 @@ func (f *Fs) internalRename(ctx context.Context, itemID int64, newName string) e
 		Filename: newName,
 	}
 	
-
 	
+	var respData CommonResponse
+
 	err := f.pacer.Call(func() (bool, error) {
 		// 构建请求
 		opts := f.newMetaOpts(ctx)
@@ -1367,7 +1368,6 @@ func (f *Fs) internalRename(ctx context.Context, itemID int64, newName string) e
 		opts.Path = "/api/v1/file/name"
 
 		// 发送请求
-		var respData CommonResponse
 		resp, callErr := f.rest.CallJSON(ctx, &opts, &reqBody, &respData)
 		return f.shouldRetry(resp, callErr)
 	})
@@ -1377,7 +1377,7 @@ func (f *Fs) internalRename(ctx context.Context, itemID int64, newName string) e
 	}
 	
 	if respData.Code != 0 {
-		return fmt.Errorf("rename failed: api returned error for id %d, code: %d, message: %s", itemID, respData.Code, respData.Msg)
+		return fmt.Errorf("rename failed: api returned error for id %d, code: %d, message: %s", itemID, respData.Code, respData.Message)
 	}
 	return nil
 }
@@ -1588,6 +1588,13 @@ var (
 	_ fs.Object         = (*Object)(nil)
 )
 
+var retryErrorCodes = []int{
+	408, // Request Timeout
+	429, // Rate exceeded.
+	500, // Get occasional 500 Internal Server Error
+	504, // Gateway Time-out
+}
+
 // shouldRetry 是一个健壮的重试决策函数，它封装了所有重试逻辑。
 // 这个版本严格遵循“优先检查响应（resp），其次检查错误（err）”的原则。
 func (f *Fs) shouldRetry(resp *http.Response, err error) (bool, error) {
@@ -1659,15 +1666,15 @@ func (f *Fs) shouldRetry(resp *http.Response, err error) (bool, error) {
 		// 情况 B: HTTP状态码不是 200 OK。
 		// 使用rclone的标准HTTP错误分类器来判断。
 		// 它能正确处理 429 (Too Many Requests), 5xx (Server Errors) 等。
-		if fserrors.ShouldRetryHTTP(resp, fserrors.Retries) {
+		if fserrors.ShouldRetryHTTP(resp, retryErrorCodes) {
 			fs.Debugf(nil, "HTTP状态码 %d，将进行重试。", resp.StatusCode)
 			// 必须返回由 fserrors 包装后的错误，以便 pacer 正确处理。
-			return true, fserrors.NewErrorFromResponse(resp)
+			return true, err
 		}
 		
 		// 对于其他不可重试的HTTP状态码（如404 Not Found），不进行重试。
 		fs.Debugf(nil, "不可重试的HTTP状态码：%d", resp.StatusCode)
-		return false, fserrors.NewErrorFromResponse(resp)
+		return false, err
 	}
 
 	// ----------------------------------------------------------------
