@@ -1185,8 +1185,7 @@ func (o *Object) Update(ctx context.Context, in io.Reader, src fs.ObjectInfo, op
 	if src.Size() < 0 || src.Size() > singleUploadCutoff {
 		fs.Debugf(src, "Using chunked upload for update (size: %d)", src.Size())
 		new_o, err := o.fs.putChunked(ctx, in, src, duplicatePolicyOverwrite)
-	}
-	else{
+	} else {
 		fs.Debugf(src, "Using single part upload for update (size: %d)", src.Size())
 		new_o, err := o.fs.putSingle(ctx, in, src, duplicatePolicyOverwrite)
 	}
