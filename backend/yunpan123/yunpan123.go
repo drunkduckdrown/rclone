@@ -1571,7 +1571,7 @@ func (f *Fs) open(ctx context.Context, o *Object, options ...fs.OpenOption) (io.
 func (f *Fs) newMetaOpts(ctx context.Context) rest.Opts {
 	return rest.Opts{
 		Timeout:      global_timeout,
-		RootURL:         f.apiBaseURL
+		RootURL:         f.apiBaseURL,
 		ExtraHeaders: map[string]string{
 			"Authorization": "Bearer " + f.tokenMgr.GetAndStoreToken("/get_token"),
 			"Platform":      "open_platform",
