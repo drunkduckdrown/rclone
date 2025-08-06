@@ -1668,12 +1668,27 @@ func (f *Fs) shouldRetry(resp *http.Response, err error) (bool, error) {
 	// 步骤 1: 优先处理 `resp` (如果存在)
 	// ----------------------------------------------------------------
 	if resp != nil {
-		defer resp.Body.Close()
+	
+		isGoodResponse := (resp.StatusCode >= 200 && resp.StatusCode < 300)
+		contentType := resp.Header.Get("Content-Type")
+		isJSONResponse := strings.HasPrefix(contentType, "application/json")
+	
+	
+		// 如果响应码是2XX，并且看起来也不是JSON API响应，那么就假定它是一个文件下载流。
+		// 在这种情况下，我们【绝对不能】读取或关闭 Body，直接返回不重试。
+		if isGoodResponse && !isJSONResponse {
+			fs.Debugf(f, "Success response with Content-Type '%s', assuming it's a download stream. Not reading body, not retrying.", contentType)
+			return false, err // err 此时为 nil
+		} else {
+			defer resp.Body.Close()
+		}
+		
+		
 	
 		// 如果我们收到了响应，那么HTTP状态码是首要的判断依据。
 
 		// 情况 A: HTTP状态码是 200 OK，需要检查响应体内的业务码。
-		if resp.StatusCode == http.StatusOK {
+		if resp.StatusCode == http.StatusOK && isJSONResponse{
 			// 【关键操作】读取响应体，并立即用可重复读的副本替换它。
 			// 这样做可以让我们检查业务码，同时不影响外层代码后续对响应体的解码。
 			bodyBytes, readErr := io.ReadAll(resp.Body)
@@ -1728,6 +1743,11 @@ func (f *Fs) shouldRetry(resp *http.Response, err error) (bool, error) {
 				// 其他所有未知的非零业务码，默认为不可重试的错误。
 				return false, fmt.Errorf("未知的API错误 (code=%d): %s", result.Code, result.Message)
 			}
+		}
+		
+		if resp.StatusCode > 200 && resp.StatusCode < 300{
+			fs.Debugf(nil, "HTTP状态码：%d, 认为调用成功", resp.StatusCode)
+			return false, err
 		}
 
 		// 情况 B: HTTP状态码不是 200 OK。
