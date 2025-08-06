@@ -37,9 +37,9 @@ import (
 )
 
 const (
-	const singleUploadCutoff = 16 * 1024 * 1024
-	const duplicatePolicyRename = 1 //  1 代表重命名
-	const duplicatePolicyOverwrite = 2
+	singleUploadCutoff = 16 * 1024 * 1024
+	duplicatePolicyRename = 1 //  1 代表重命名
+	duplicatePolicyOverwrite = 2
 	maxTries      = 10
 	minSleep      = 10 * time.Millisecond
 	maxSleep      = 2 * time.Second
