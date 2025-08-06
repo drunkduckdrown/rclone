@@ -1503,7 +1503,7 @@ func (f *Fs) open(ctx context.Context, o *Object, options ...fs.OpenOption) (io.
 		opts.Path = "/api/v1/file/download_info"
 		opts.Parameters = params
 		resp, callErr := f.callJSONWithBody(ctx, &opts, nil, &infoResp)
-		if callErr == nil && resp != nill{
+		if callErr == nil && resp != nil{
 			return false, callErr
 		}
 		return f.shouldRetry(resp, callErr)
@@ -1620,11 +1620,11 @@ func (f *Fs) callJSONWithBody(ctx context.Context, opts *rest.Opts, request inte
 		}
 		// 设置请求体和Content-Type头
 		opts.Body = bytes.NewReader(reqBytes)
-		opts.SetHeader("Content-Type", "application/json")
+		opts.ContentType = "application/json"
 	}
 
 	// 2. 设置期望的响应类型
-	opts.SetHeader("Accept", "application/json")
+	//opts.ExtraHeaders["Accept"] = "application/json"
 
 	// 3. 调用底层的 rest.Call
 	resp, err := f.rest.Call(ctx, opts)
