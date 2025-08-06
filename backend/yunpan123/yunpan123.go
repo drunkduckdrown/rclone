@@ -23,7 +23,7 @@ import (
 
 	"github.com/rclone/rclone/fs"
 	"github.com/rclone/rclone/fs/hash"
-	"github.com/rclone/rclone/fs/fshttp"
+	//"github.com/rclone/rclone/fs/fshttp"
 	"github.com/rclone/rclone/fs/fserrors"
 	//"github.com/rclone/rclone/fs/config"
 	//"github.com/rclone/rclone/fs/config/obscure"
@@ -1182,18 +1182,20 @@ func (f *Fs) Put(ctx context.Context, in io.Reader, src fs.ObjectInfo, options .
 func (o *Object) Update(ctx context.Context, in io.Reader, src fs.ObjectInfo, options ...fs.OpenOption) error {
 	// To overwrite, we must first delete the existing object(s) with the same name.
 	// This is a more robust approach than relying solely on the 'duplicate' flag.
+	var (
+		new_o fs.Object // new_o 的类型是 fs.Object 接口
+		err   error
+	)
 	if src.Size() < 0 || src.Size() > singleUploadCutoff {
 		fs.Debugf(src, "Using chunked upload for update (size: %d)", src.Size())
-		new_o, err := o.fs.putChunked(ctx, in, src, duplicatePolicyOverwrite)
+		new_o, err = o.fs.putChunked(ctx, in, src, duplicatePolicyOverwrite)
 	} else {
 		fs.Debugf(src, "Using single part upload for update (size: %d)", src.Size())
-		new_o, err := o.fs.putSingle(ctx, in, src, duplicatePolicyOverwrite)
+		new_o, err = o.fs.putSingle(ctx, in, src, duplicatePolicyOverwrite)
 	}
 	
-	if err == nil{
-		newObj, ok := new_o.(*Object)
-		if ok {*o = *newObj}
-	}
+	newObj, ok := new_o.(*Object)
+	if ok {*o = *newObj}
 	return err
 }
 
@@ -1649,7 +1651,7 @@ func (f *Fs) shouldRetry(resp *http.Response, err error) (bool, error) {
 				// 业务码为429，表示API层面的限流。
 				fs.Debugf(nil, "API业务码429：触发业务层限流。")
 				// 返回这个rclone特定的错误，pacer会识别它并自动降速。
-				return true, fserrors.ErrTooManyRequests
+				return true, fmt.Errorf("API错误 (code=%d): %s", result.Code, result.Message)
 
 			case result.Code >= 5000:
 				// API定义的、不可重试的服务器端错误。

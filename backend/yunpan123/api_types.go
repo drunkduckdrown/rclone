@@ -2,7 +2,6 @@ package yunpan123
 
 import (
 	//"time"
-	"io"
 )
 
 // --- 123 云盘 API 响应的通用结构 ---
