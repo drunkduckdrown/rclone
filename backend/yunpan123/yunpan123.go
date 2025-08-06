@@ -7,6 +7,7 @@ import (
 	"io"
 	"time"
 	"encoding/json"
+	"net"
 	"net/http"
 	"net/url" // 新增导入
 	"path"    // 新增导入
@@ -40,7 +41,7 @@ const (
 	singleUploadCutoff = 16 * 1024 * 1024
 	duplicatePolicyRename = 1 //  1 代表重命名
 	duplicatePolicyOverwrite = 2
-	maxTries      = 10
+	//maxTries      = 10
 	minSleep      = 10 * time.Millisecond
 	maxSleep      = 2 * time.Second
 	decayConstant = 2 // bigger for slower decay, exponential
@@ -165,7 +166,7 @@ type Fs struct {
 	apiBaseURL string
 	opt      Options           // 配置
 	ci       *fs.ConfigInfo // global config
-	pacer    *pacer.Pacer      // rclone 提供的限速器，用于控制 API 请求频率
+	pacer    *fs.Pacer      // rclone 提供的限速器，用于控制 API 请求频率
 	//client   *APIClient      // 你的 123 云盘 API 客户端
 	rest     *rest.Client      // *** 新增此行 ***
 	tokenMgr *tokenmanager.Manager // 你的 token 管理器实例
@@ -236,7 +237,7 @@ func NewFs(ctx context.Context, name, root string, m configmap.Mapper) (fs.Fs, e
 		apiBaseURL:      apiBaseURL,
 		opt:             *opt,
 		ci:              fs.GetConfig(ctx),
-		pacer:           fs.NewPacer(ctx, pacer.NewDefault(pacer.MaxTries(maxTries), pacer.MinSleep(minSleep), pacer.MaxSleep(maxSleep), pacer.DecayConstant(decayConstant))),
+		pacer:           fs.NewPacer(ctx, pacer.NewDefault(pacer.MinSleep(minSleep), pacer.MaxSleep(maxSleep), pacer.DecayConstant(decayConstant))),
 		//client:          apiClient,
 		tokenMgr:        tokenMgr,
 		pathCache:       make(map[string]*cacheEntry),
@@ -684,7 +685,7 @@ func (f *Fs) Mkdir(ctx context.Context, dir string) error {
 	})
 	
 	if err != nil {
-		return nil, fmt.Errorf("failed to call mkdir api: %w", err)
+		return fmt.Errorf("failed to call mkdir api: %w", err)
 	}
 
 
@@ -736,7 +737,7 @@ func (f *Fs) getUploadDomain(ctx context.Context) (string, error) {
 	})
 	
 	if err != nil {
-		return nil, fmt.Errorf("failed to call upload domain api: %w", err)
+		return "", fmt.Errorf("failed to call upload domain api: %w", err)
 	}
 	
 
@@ -830,20 +831,22 @@ func (f *Fs) putSingle(ctx context.Context, in io.Reader, src fs.ObjectInfo, dup
 		}
 
 		opts.Body = &bodyBuf
-		opts.ContentLength = int64(bodyBuf.Len())
+		contentLength := int64(bodyBuf.Len())
+		opts.ContentLength = &contentLength
 		opts.ContentType = multipartWriter.FormDataContentType()
 
 		// 3. 执行请求
-		resp, doErr := f.rest.Do(ctx, &opts)
+		resp, doErr := f.rest.Call(ctx, &opts)
 		should, retryErr := f.shouldRetry(resp, doErr)
 		if retryErr != nil {
 			if resp != nil {
-				fs.Drain(resp.Body) // 重试前必须清空响应体
+				defer resp.Body.Close()
+				//fs.Drain(resp.Body) // 重试前必须清空响应体
 			}
 			return should, retryErr
 		}
 		// 如果执行到这里，说明请求成功 (HTTP 2xx)，不再重试
-		defer fs.Drain(resp.Body)
+		defer resp.Body.Close()
 
 		// 4. 解码成功的响应体
 		var respData SingleUploadResponse
@@ -881,15 +884,6 @@ func (f *Fs) putSingle(ctx context.Context, in io.Reader, src fs.ObjectInfo, dup
 	fs.Debugf(src, "单步上传成功，文件ID: %s", finalFileInfo.FileId)
 	return f.newObjectFromInfo(ctx, finalFileInfo)
 }
-
-// SingleUploadResponse 是单步上传响应的JSON体
-type SingleUploadResponse struct {
-	Data struct {
-		Completed bool   `json:"completed"`
-		FileID    string `json:"fileId"`
-	} `json:"data"`
-}
-
 
 
 
@@ -1149,13 +1143,16 @@ func (f *Fs) uploadChunk(ctx context.Context, url string, preuploadID string, fi
 
 		opts.Body = &bodyBuf
 		opts.ContentLength = int64(bodyBuf.Len())
+		contentLength := int64(bodyBuf.Len())
+		opts.ContentLength = &contentLength
 		opts.ContentType = multipartWriter.FormDataContentType()
 
 		// 3. 执行请求
-		resp, doErr := f.rest.Do(ctx, &opts)
+		resp, doErr := f.rest.Call(ctx, &opts)
 		should, err := f.shouldRetry(resp, doErr)
 		if err != nil && resp != nil {
-			fs.Drain(resp.Body) // 重试前必须清空响应体
+			defer resp.Body.Close()
+			//fs.Drain(resp.Body) // 重试前必须清空响应体
 		}
 		return should, err
 	})
@@ -1557,10 +1554,11 @@ func (f *Fs) open(ctx context.Context, o *Object, options ...fs.OpenOption) (io.
 	var downloadResp *http.Response
 	err = f.pacer.Call(func() (bool, error) {
 		var doErr error
-		downloadResp, doErr = f.rest.Do(ctx, &downloadOpts)
+		downloadResp, doErr = f.rest.Call(ctx, &downloadOpts)
 		should, err := f.shouldRetry(downloadResp, doErr)
 		if err != nil && downloadResp != nil {
-			fs.Drain(downloadResp.Body) // 重试前清空响应体
+			defer downloadResp.Body.Close()
+			//fs.Drain(downloadResp.Body) // 重试前清空响应体
 		}
 		return should, err
 	})
