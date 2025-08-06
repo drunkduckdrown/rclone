@@ -139,13 +139,6 @@ type ChunkedUploadCompleteResponse struct {
 	} `json:"data"`
 }
 
-// chunkJob 定义了上传任务的数据结构，用于在生产者和消费者之间传递
-type chunkJob struct {
-	number int          // 分片序号
-	size   int64        // 分片大小
-	reader io.Reader    // 分片数据的Reader
-}
-
 // TrashRequest 对应 /api/v1/file/trash 的请求体
 type TrashRequest struct {
 	FileIDs []int64 `json:"fileIDs"`

@@ -950,7 +950,7 @@ func (f *Fs) putChunked(ctx context.Context, in io.Reader, src fs.ObjectInfo, du
 
 
 
-	finalFileID := -1
+	finalFileID := int64(-1)
 	err = f.pacer.Call(func() (bool, error) {
 	// --- 步骤 3: 发送完成请求，确认文件合并 ---
 		completeReqBody := ChunkedUploadCompleteRequest{PreuploadID: preuploadID}
