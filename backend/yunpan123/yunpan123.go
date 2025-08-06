@@ -802,7 +802,7 @@ func (f *Fs) putSingle(ctx context.Context, in io.Reader, src fs.ObjectInfo, dup
 		opts.Method = "POST"
 		opts.RootURL =uploadDomain
 		opts.Path = "/upload/v2/file/single/create"
-		opts.NoResponse = true // 使用rest.Do，需要自己处理响应
+		//opts.NoResponse = true // 使用rest.Do，需要自己处理响应
 
 		// 2. 在每次循环内，重新构建 multipart 请求体
 		var bodyBuf bytes.Buffer
@@ -841,8 +841,8 @@ func (f *Fs) putSingle(ctx context.Context, in io.Reader, src fs.ObjectInfo, dup
 
 		// 3. 执行请求
 		resp, doErr := f.rest.Call(ctx, &opts)
-		if resp.StatusCode != http.StatusOK{
-			fs.Debugf(src, "单步上传状态码: %d, %w", resp.StatusCode, doErr)
+		if resp.StatusCode != http.StatusOK {
+			//fs.Debugf(src, "单步上传状态码: %d, %w", resp.StatusCode, doErr)
 			if doErr !=nil{
 				defer resp.Body.Close()
 				return f.shouldRetry(resp, doErr)
@@ -855,6 +855,7 @@ func (f *Fs) putSingle(ctx context.Context, in io.Reader, src fs.ObjectInfo, dup
 		// 4. 解码成功的响应体
 		var respData SingleUploadResponse
 		if err := json.NewDecoder(resp.Body).Decode(&respData); err != nil {
+		//if err := json.Unmarshal(resp.Body, &respData); err != nil {
 			// 解码失败可能意味着服务器返回了非预期的成功响应，这通常是不可重试的错误
 			return false, fmt.Errorf("解码失败: %w", err)
 		}
@@ -1134,7 +1135,7 @@ func (f *Fs) uploadChunk(ctx context.Context, url string, preuploadID string, fi
 		opts.Method = "POST"
 		opts.RootURL = url
 		opts.Path = "/upload/v2/file/slice"
-		opts.NoResponse = true
+		// opts.NoResponse = true
 
 		// 2. 在每次循环内，重新构建multipart请求体
 		var bodyBuf bytes.Buffer
@@ -1701,7 +1702,7 @@ func (f *Fs) newDownloadOpts(options ...fs.OpenOption) rest.Opts {
 	return rest.Opts{
 		Method:     "GET",
 		Options:    options,
-		NoResponse: true,
+		// NoResponse: true,
 	}
 }
 
