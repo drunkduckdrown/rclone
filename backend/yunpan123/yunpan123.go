@@ -841,14 +841,17 @@ func (f *Fs) putSingle(ctx context.Context, in io.Reader, src fs.ObjectInfo, dup
 
 		// 3. 执行请求
 		resp, doErr := f.rest.Call(ctx, &opts)
-		should, retryErr := f.shouldRetry(resp, doErr)
-		if retryErr != nil {
-			if resp != nil {
-				defer resp.Body.Close()
-				//fs.Drain(resp.Body) // 重试前必须清空响应体
+		if resp.StatusCode != http.StatusOK{
+			should, retryErr := f.shouldRetry(resp, doErr)
+			if retryErr != nil {
+				if resp != nil {
+					defer resp.Body.Close()
+					//fs.Drain(resp.Body) // 重试前必须清空响应体
+				}
+				return should, retryErr
 			}
-			return should, retryErr
 		}
+
 		// 如果执行到这里，说明请求成功 (HTTP 2xx)，不再重试
 		defer resp.Body.Close()
 
