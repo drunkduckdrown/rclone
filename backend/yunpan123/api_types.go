@@ -150,9 +150,15 @@ type MoveRequest struct {
 }
  
 // RenameRequest 定义了调用重命名 API 时发送的 JSON body
-type RenameRequest struct {
-	FileID   int64  `json:"fileId"`
-	Filename string `json:"filename"`
+//type RenameRequest struct {
+//	FileID   int64  `json:"fileId"`
+//	Filename string `json:"filename"`
+//}
+
+// BatchRenameRequest 定义了批量重命名API的请求体结构
+// 注意：即使我们一次只重命名一个，API本身的设计是批量的
+type BatchRenameRequest struct {
+	RenameList []string `json:"renameList"`
 }
 
 // --- 文件下载 (Open) 相关的 API 类型 ---

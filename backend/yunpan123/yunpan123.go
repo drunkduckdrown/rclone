@@ -1368,36 +1368,80 @@ func (f *Fs) internalMove(ctx context.Context, itemID int64, dstParentPath strin
 }
 
 // internalRename 是一个通用的内部函数，用于重命名任何项目（文件或目录）。
+//func (f *Fs) internalRename(ctx context.Context, itemID int64, newName string) error {
+//	fs.Debugf(nil, "internalRename: renaming item ID %d to '%s'", itemID, newName)
+//	reqBody := RenameRequest{
+//		FileID:   itemID,
+//		Filename: newName,
+//	}
+//	
+//	
+//	var respData CommonResponse
+//
+//	err := f.pacer.Call(func() (bool, error) {
+//		// 构建请求
+//		opts := f.newMetaOpts(ctx)
+//		opts.Method = "POST"
+//		opts.Path = "/api/v1/file/name"
+//
+//		// 发送请求
+//		resp, callErr := f.callJSONWithBody(ctx, &opts, &reqBody, &respData)
+//		return f.shouldRetry(resp, callErr)
+//	})
+//	
+//	if err != nil {
+//		return fmt.Errorf("failed to call internalRename api: %w", err)
+//	}
+//	
+//	if respData.Code != 0 {
+//		return fmt.Errorf("rename failed: api returned error for id %d, code: %d, message: %s", itemID, respData.Code, respData.Message)
+//	}
+//	return nil
+//}
+
+
+// internalRename 使用新的 /api/v1/file/rename 接口重命名单个项目
 func (f *Fs) internalRename(ctx context.Context, itemID int64, newName string) error {
-	fs.Debugf(nil, "internalRename: renaming item ID %d to '%s'", itemID, newName)
-	reqBody := RenameRequest{
-		FileID:   itemID,
-		Filename: newName,
+	fs.Debugf(nil, "internalRename: renaming item ID %d to '%s' via batch-style API", itemID, newName)
+
+	// 1. 构建新的请求体
+	// 格式要求为 "id|新名字" 的字符串
+	renameInstruction := fmt.Sprintf("%d|%s", itemID, newName)
+
+	// 将指令放入请求体结构中。因为API需要一个数组，我们创建一个只包含一个元素的切片。
+	reqBody := BatchRenameRequest{
+		RenameList: []string{renameInstruction},
 	}
 	
-	
+	// 响应体结构保持不变
 	var respData CommonResponse
 
 	err := f.pacer.Call(func() (bool, error) {
 		// 构建请求
 		opts := f.newMetaOpts(ctx)
 		opts.Method = "POST"
-		opts.Path = "/api/v1/file/name"
+		// 2. 更新API路径
+		opts.Path = "/api/v1/file/rename"
 
-		// 发送请求
+		// 发送请求，传入新的请求体
 		resp, callErr := f.callJSONWithBody(ctx, &opts, &reqBody, &respData)
 		return f.shouldRetry(resp, callErr)
 	})
 	
 	if err != nil {
-		return fmt.Errorf("failed to call move api: %w", err)
+		// 错误信息可以更具体一些
+		return fmt.Errorf("failed to call rename api '/api/v1/file/rename': %w", err)
 	}
 	
+	// 3. 响应处理逻辑保持不变
 	if respData.Code != 0 {
 		return fmt.Errorf("rename failed: api returned error for id %d, code: %d, message: %s", itemID, respData.Code, respData.Message)
 	}
+
+	fs.Debugf(nil, "Successfully renamed item ID %d to '%s'", itemID, newName)
 	return nil
 }
+
 
 // Move moves and/or renames a file.
 func (f *Fs) Move(ctx context.Context, src fs.Object, remote string) (fs.Object, error) {
