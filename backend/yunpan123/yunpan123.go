@@ -176,6 +176,9 @@ type Fs struct {
 	pathCacheMu  sync.RWMutex
 	cacheTTL     time.Duration // *** 新增：缓存的生命周期 ***
 	
+	linkCache    map[int64]cachedURL // 缓存: 文件ID -> 缓存的URL信息
+	linkCacheMu  sync.RWMutex        // 用于保护缓存并发访问的读写锁
+	
 	uploadDomain          string
 	uploadDomainExpiresAt time.Time // 上传域名的过期时间
 	uploadDomainMu        sync.Mutex  // 保护上传域名的读写
@@ -185,6 +188,12 @@ type Fs struct {
 type cacheEntry struct {
 	id        int64
 	expiresAt time.Time
+}
+
+// cachedURL 存储缓存的下载链接及其过期时间
+type cachedURL struct {
+	URL     string
+	Expires time.Time
 }
 
 // NewFs initializes the 123 cloud drive backend
@@ -242,9 +251,17 @@ func NewFs(ctx context.Context, name, root string, m configmap.Mapper) (fs.Fs, e
 		tokenMgr:        tokenMgr,
 		pathCache:       make(map[string]*cacheEntry),
 		cacheTTL:        dir_cacheTTL, // 设置目录对应id的缓存时间
+		
+		// --- 初始化下载链接缓存 ---
+		linkCache: make(map[int64]cachedURL),
 	}
 	// 根目录的缓存永不过期，或者给一个很长的过期时间
 	f.pathCache[""] = &cacheEntry{id: 0, expiresAt: time.Now().AddDate(1, 0, 0)}
+	
+	// 将下载链接ttl默认值设置得合理一些，比如1小时
+	if f.opt.LinkTTL <= 0 {
+		f.opt.LinkTTL = fs.Duration(2 * time.Hour)
+	}
 	
 	// 启动后台缓存清理协程
 	go f.startCacheCleaner(ctx)
@@ -308,9 +325,10 @@ func init() {
 
 // Options defines the configuration for this backend
 type Options struct {
-	Cloud_function_url              string     `config:"Cloud_function_url"`
-	Cloud_function_auth_token       string     `config:"Cloud_function_auth_token"`
-	Api_base_url                    string     `config:"Api_base_url"`
+	Cloud_function_url              string       `config:"Cloud_function_url"`
+	Cloud_function_auth_token       string       `config:"Cloud_function_auth_token"`
+	Api_base_url                    string       `config:"Api_base_url"`
+	LinkTTL                         fs.Duration  `config:"link_ttl" config_help:"Time that download links are considered valid for.\nUseful to set this to slightly less than the link expiry time of your backend."`
 }
 
 // ------------------------------------------------------------------------------------
@@ -1481,49 +1499,96 @@ func (f *Fs) DirMove(ctx context.Context, src fs.Fs, srcRemote, dstRemote string
 }
 
 
-// open an object for read. It's a two-step process:
-// 1. Get a temporary download URL from the API.
-// 2. Make a request to that URL, handling Range headers for seeking.
+// open an object for reading.
+// This version relies on the rclone VFS layer to retry the whole Open call on failure.
 func (f *Fs) open(ctx context.Context, o *Object, options ...fs.OpenOption) (io.ReadCloser, error) {
-	// --- 步骤 1: 获取下载 URL ---
-	fs.Debugf(o, "Opening file, requesting download URL")
+	var downloadURL string
 
-	// 构建请求
-	params := url.Values{}
-	params.Set("fileId", strconv.FormatInt(o.id, 10))
-	
+	// --- 步骤 1: 获取下载 URL (带缓存) ---
+	f.linkCacheMu.RLock()
+	cached, found := f.linkCache[o.id]
+	// 检查缓存是否存在且未过期
+	if found && time.Now().Before(cached.Expires) {
+		downloadURL = cached.URL
+		f.linkCacheMu.RUnlock()
+		fs.Debugf(o, "Using cached download URL")
+	} else {
+		// 缓存未命中或已过期，需要获取新链接
+		f.linkCacheMu.RUnlock()
 
+		f.linkCacheMu.Lock()
+		// 双重检查锁定
+		cached, found = f.linkCache[o.id]
+		if found && time.Now().Before(cached.Expires) {
+			downloadURL = cached.URL
+			// 找到有效链接，直接解锁返回
+			f.linkCacheMu.Unlock()
+			fs.Debugf(o, "Using cached download URL (acquired after waiting for lock)")
+		} else {
+			// 确认需要我们自己去获取新链接
+			fs.Debugf(o, "Cache miss or expired, requesting new download URL for file ID %d", o.id)
 
-	// 发送请求
-	var infoResp DownloadInfoResponse
-	
-	err := f.pacer.Call(func() (bool, error) {
-		opts := f.newMetaOpts(ctx)
-		opts.Method = "GET"
-		opts.Path = "/api/v1/file/download_info"
-		opts.Parameters = params
-		resp, callErr := f.callJSONWithBody(ctx, &opts, nil, &infoResp)
-		if callErr == nil && resp != nil{
-			return false, callErr
+			// --- 调用API获取新链接 ---
+			params := url.Values{}
+			params.Set("fileId", strconv.FormatInt(o.id, 10))
+			
+			var infoResp DownloadInfoResponse
+			// 注意：这里我们仍然在锁内部执行API调用。
+			// 这是为了防止“惊群效应”，即多个goroutine同时请求同一个文件的链接。
+			err := f.pacer.Call(func() (bool, error) {
+				opts := f.newMetaOpts(ctx)
+				opts.Method = "GET"
+				opts.Path = "/api/v1/file/download_info"
+				opts.Parameters = params
+				resp, callErr := f.callJSONWithBody(ctx, &opts, nil, &infoResp)
+				if callErr == nil && resp != nil {
+					return false, callErr
+				}
+				return f.shouldRetry(resp, callErr)
+			})
+
+			if err != nil {
+				f.linkCacheMu.Unlock() // ★ 别忘了在出错时解锁
+				return nil, fmt.Errorf("failed to call download_info api: %w", err)
+			}
+
+			if infoResp.Code != 0 || infoResp.Data.DownloadURL == "" {
+				f.linkCacheMu.Unlock() // ★ 别忘了在出错时解锁
+				return nil, fmt.Errorf("open: api returned error for download info: code=%d, msg='%s'", infoResp.Code, infoResp.Message)
+			}
+
+			downloadURL = infoResp.Data.DownloadURL
+
+			// 成功获取后，写入缓存
+			expirationTime := time.Now().Add(time.Duration(f.opt.LinkTTL))
+			f.linkCache[o.id] = cachedURL{
+				URL:     downloadURL,
+				Expires: expirationTime,
+			}
+			f.linkCacheMu.Unlock() // ★ 成功后解锁
+			fs.Debugf(o, "Got and cached new download URL, expires in %v", f.opt.LinkTTL)
 		}
-		return f.shouldRetry(resp, callErr)
-	})
-	
-	if err != nil {
-		return nil, fmt.Errorf("failed to call download_info api: %w", err)
-	}
-
-	if infoResp.Code != 0 || infoResp.Data.DownloadURL == "" {
-		return nil, fmt.Errorf("open: api returned error for download info: code=%d, msg='%s'", infoResp.Code, infoResp.Message)
 	}
 	
-	downloadURL := infoResp.Data.DownloadURL
+	// 如果到这里 downloadURL 仍然为空, 说明逻辑出错了
+	if downloadURL == "" {
+		return nil, fmt.Errorf("internal error: failed to obtain a download URL for object %s", o.remote)
+	}
+	
 	fs.Debugf(o, "Got download URL: %s", downloadURL)
 
-	// --- 步骤 2: 向下载 URL 发起请求，处理 Range ---
-	
+	// --- 步骤 2: 向下载 URL 发起请求 ---
 	downloadOpts := f.newDownloadOpts(options...)
 	parsedURL, err := url.Parse(downloadURL)
+	if err != nil {
+		// 如果URL本身解析失败，这通常是API返回了无效的URL。
+		// 我们也应该清除这个坏掉的缓存。
+		fs.Debugf(o, "Failed to parse download URL, clearing cache for it. URL: %s", downloadURL)
+		f.linkCacheMu.Lock()
+		delete(f.linkCache, o.id)
+		f.linkCacheMu.Unlock()
+		return nil, fmt.Errorf("failed to parse download URL: %w", err)
+	}
 	downloadOpts.RootURL = fmt.Sprintf("%s://%s", parsedURL.Scheme, parsedURL.Host)
 	downloadOpts.Path = parsedURL.RequestURI()
 	downloadOpts.Method = "GET"
@@ -1532,10 +1597,27 @@ func (f *Fs) open(ctx context.Context, o *Object, options ...fs.OpenOption) (io.
 	err = f.pacer.Call(func() (bool, error) {
 		var doErr error
 		downloadResp, doErr = f.rest.Call(ctx, &downloadOpts)
+		
+		// ★★★ 核心逻辑在这里 ★★★
+		// 检查是否是需要清除缓存的特定错误
+		if doErr == nil && downloadResp != nil && (downloadResp.StatusCode == http.StatusUnauthorized || downloadResp.StatusCode == http.StatusForbidden) {
+			// 我们不在这里重试，而是将错误传递出去，让上层决定是否重试整个Open
+			// 在传递错误之前，清除无效的缓存项
+			fs.Debugf(o, "Download link returned %d, clearing cache and failing the Open call.", downloadResp.StatusCode)
+			f.linkCacheMu.Lock()
+			delete(f.linkCache, o.id)
+			f.linkCacheMu.Unlock()
+
+			// 构造一个明确的错误信息返回
+			body, _ := io.ReadAll(downloadResp.Body)
+			_ = downloadResp.Body.Close()
+			return false, fmt.Errorf("download link returned %s: %s", downloadResp.Status, string(body))
+		}
+		
+		// 使用你原有的重试逻辑处理其他临时性错误（如网络抖动）
 		should, err := f.shouldRetry(downloadResp, doErr)
 		if err != nil && downloadResp != nil {
-			defer downloadResp.Body.Close()
-			//fs.Drain(downloadResp.Body) // 重试前清空响应体
+			_ = downloadResp.Body.Close()
 		}
 		return should, err
 	})
