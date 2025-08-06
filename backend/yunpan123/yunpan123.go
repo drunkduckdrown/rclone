@@ -47,9 +47,9 @@ const (
 	decayConstant = 2 // bigger for slower decay, exponential
 	dir_cacheTTL  = 15 * time.Second
 	connection_timeout = 10 * time.Second
-	global_timeout     = 15 * time.Second
-	upload_timeout     = 15 * time.Minute
-	download_timeout   = 0
+	//global_timeout     = 15 * time.Second
+	//upload_timeout     = 15 * time.Minute
+	//download_timeout   = 0
 	set_transfers          = 5
 )
 
@@ -263,8 +263,6 @@ func NewFs(ctx context.Context, name, root string, m configmap.Mapper) (fs.Fs, e
 			TLSHandshakeTimeout:   10 * time.Second,
 			ExpectContinueTimeout: 1 * time.Second,
 		},
-		// 设置默认的请求总超时
-		Timeout: global_timeout,
 	})
 	
 
@@ -1185,17 +1183,17 @@ func (o *Object) Update(ctx context.Context, in io.Reader, src fs.ObjectInfo, op
 	// To overwrite, we must first delete the existing object(s) with the same name.
 	// This is a more robust approach than relying solely on the 'duplicate' flag.
 	if src.Size() < 0 || src.Size() > singleUploadCutoff {
-		o.fs.Debugf(src, "Using chunked upload for update (size: %d)", src.Size())
+		fs.Debugf(src, "Using chunked upload for update (size: %d)", src.Size())
 		new_o, err := o.fs.putChunked(ctx, in, src, duplicatePolicyOverwrite)
 		if err == nil{
-			o = new_o
+			o = &new_o
 		}
 		return err
 	}
-	o.fs.Debugf(src, "Using single part upload for update (size: %d)", src.Size())
+	fs.Debugf(src, "Using single part upload for update (size: %d)", src.Size())
 	new_o, err := o.fs.putSingle(ctx, in, src, duplicatePolicyOverwrite)
 	if err == nil{
-		o = new_o
+		o = &new_o
 	}
 	return err
 }
@@ -1229,7 +1227,7 @@ func (f *Fs) trashItems(ctx context.Context, fileIDs []int64) error {
 		})
 
 		if err != nil {
-			return nil, fmt.Errorf("failed to call trash api: %w", err)
+			return fmt.Errorf("failed to call trash api: %w", err)
 		}
 
 		if respData.Code != 0 {
@@ -1343,7 +1341,7 @@ func (f *Fs) internalMove(ctx context.Context, itemID int64, dstParentPath strin
 	})
 	
 	if err != nil {
-		return nil, fmt.Errorf("failed to call move api: %w", err)
+		return fmt.Errorf("failed to call move api: %w", err)
 	}
 	
 	if respData.Code != 0 {
@@ -1360,21 +1358,22 @@ func (f *Fs) internalRename(ctx context.Context, itemID int64, newName string) e
 		Filename: newName,
 	}
 	
-	// 构建请求
-	opts := f.newMetaOpts(ctx)
-	opts.Method = "POST"
-	opts.Path = "/api/v1/file/name"
 
-	// 发送请求
-	var respData CommonResponse
 	
 	err := f.pacer.Call(func() (bool, error) {
+		// 构建请求
+		opts := f.newMetaOpts(ctx)
+		opts.Method = "POST"
+		opts.Path = "/api/v1/file/name"
+
+		// 发送请求
+		var respData CommonResponse
 		resp, callErr := f.rest.CallJSON(ctx, &opts, &reqBody, &respData)
 		return f.shouldRetry(resp, callErr)
 	})
 	
 	if err != nil {
-		return nil, fmt.Errorf("failed to call move api: %w", err)
+		return fmt.Errorf("failed to call move api: %w", err)
 	}
 	
 	if respData.Code != 0 {
@@ -1550,10 +1549,9 @@ func (f *Fs) open(ctx context.Context, o *Object, options ...fs.OpenOption) (io.
 // 返回元数据请求的 rest.Opts
 func (f *Fs) newMetaOpts(ctx context.Context) rest.Opts {
 	return rest.Opts{
-		Timeout:      global_timeout,
 		RootURL:         f.apiBaseURL,
 		ExtraHeaders: map[string]string{
-			"Authorization": "Bearer " + f.tokenMgr.GetAndStoreToken("/get_token"),
+			"Authorization": "Bearer " + f.tokenMgr.GetToken(),
 			"Platform":      "open_platform",
 		},
 	}
@@ -1562,9 +1560,8 @@ func (f *Fs) newMetaOpts(ctx context.Context) rest.Opts {
 // 返回上传数据请求的 rest.Opts
 func (f *Fs) newUploadOpts(ctx context.Context) rest.Opts {
 	return rest.Opts{
-		Timeout: upload_timeout,
 		ExtraHeaders: map[string]string{
-			"Authorization": "Bearer " + f.tokenMgr.GetAndStoreToken("/get_token"),
+			"Authorization": "Bearer " + f.tokenMgr.GetToken(),
 			"Platform":      "open_platform",
 		},
 	}
@@ -1577,7 +1574,6 @@ func (f *Fs) newDownloadOpts(options ...fs.OpenOption) rest.Opts {
 		Method:     "GET",
 		Options:    options,
 		NoResponse: true,
-		Timeout:    download_timeout,
 	}
 }
 
