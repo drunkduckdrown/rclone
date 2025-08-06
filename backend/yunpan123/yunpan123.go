@@ -802,7 +802,6 @@ func (f *Fs) putSingle(ctx context.Context, in io.Reader, src fs.ObjectInfo, dup
 		opts.Method = "POST"
 		opts.RootURL =uploadDomain
 		opts.Path = "/upload/v2/file/single/create"
-		//opts.NoResponse = true // 使用rest.Do，需要自己处理响应
 
 		// 2. 在每次循环内，重新构建 multipart 请求体
 		var bodyBuf bytes.Buffer
@@ -859,23 +858,26 @@ func (f *Fs) putSingle(ctx context.Context, in io.Reader, src fs.ObjectInfo, dup
 			// 解码失败可能意味着服务器返回了非预期的成功响应，这通常是不可重试的错误
 			return false, fmt.Errorf("解码失败: %w", err)
 		}
-		if !respData.Data.Completed {
+		if respData.Data.FileID != nil && respData.Data.FileID > 0 {
+			// 5. 将成功的结果保存到外部变量
+			finalFileInfo = &FileInfoV2{
+				FileId:       respData.Data.FileID,
+				Filename:     fileName,
+				ParentFileId: parentID,
+				Type:         0, // 假设 0 代表文件
+				Etag:         md5sum,
+				Size:         src.Size(),
+				UpdateAt:     time.Now().Format("2006-01-02 15:04:05"),
+			}
+
+			return false, nil // 明确表示成功，停止 pacer 循环
+			
+		}
+		else if !respData.Data.Completed {
 			// API业务逻辑报告未完成，这可能是一个服务器端问题，标记为不可重试错误
 			return false, errors.New("API报告上传未完成")
 		}
 
-		// 5. 将成功的结果保存到外部变量
-		finalFileInfo = &FileInfoV2{
-			FileId:       respData.Data.FileID,
-			Filename:     fileName,
-			ParentFileId: parentID,
-			Type:         0, // 假设 0 代表文件
-			Etag:         md5sum,
-			Size:         src.Size(),
-			UpdateAt:     time.Now().Format("2006-01-02 15:04:05"),
-		}
-
-		return false, nil // 明确表示成功，停止 pacer 循环
 	})
 
 	// --- 步骤 3: 检查结果并返回 ---
@@ -1135,7 +1137,6 @@ func (f *Fs) uploadChunk(ctx context.Context, url string, preuploadID string, fi
 		opts.Method = "POST"
 		opts.RootURL = url
 		opts.Path = "/upload/v2/file/slice"
-		// opts.NoResponse = true
 
 		// 2. 在每次循环内，重新构建multipart请求体
 		var bodyBuf bytes.Buffer
@@ -1702,7 +1703,6 @@ func (f *Fs) newDownloadOpts(options ...fs.OpenOption) rest.Opts {
 	return rest.Opts{
 		Method:     "GET",
 		Options:    options,
-		// NoResponse: true,
 	}
 }
 
