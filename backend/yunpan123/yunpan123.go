@@ -364,7 +364,7 @@ func (f *Fs) listDir(ctx context.Context, parentID int64, parentPath string, las
 		opts.Method = "GET"
 		opts.Path = "/api/v2/file/list"
 		opts.Parameters = params
-		resp, callErr := f.rest.CallJSON(ctx, &opts, nil, &respData)
+		resp, callErr := f.callJSONWithBody(ctx, &opts, nil, &respData)
 		return f.shouldRetry(resp, callErr)
 	})
 	
@@ -545,15 +545,13 @@ func (f *Fs) About(ctx context.Context) (*fs.Usage, error) {
 		opts := f.newMetaOpts(ctx)
 		opts.Method = "GET"
 		opts.Path = "/api/v1/user/info"
-		resp, callErr := f.rest.CallJSON(ctx, &opts, nil, &respData)
+		resp, callErr := f.callJSONWithBody(ctx, &opts, nil, &respData)
 		return f.shouldRetry(resp, callErr)
 	})
 	
 	if err != nil {
 		return nil, fmt.Errorf("failed to call about api: %w", err)
 	}
-	
-	
 
 	// 5. 创建并填充 rclone 的 fs.Usage 结构体
 	totalSpace := respData.Data.SpacePermanent + respData.Data.SpaceTemp
@@ -670,7 +668,7 @@ func (f *Fs) Mkdir(ctx context.Context, dir string) error {
 		opts := f.newMetaOpts(ctx)
 		opts.Method = "POST"
 		opts.Path = "/upload/v1/file/mkdir"
-		resp, callErr := f.rest.CallJSON(ctx, &opts, &reqBody, &respData)
+		resp, callErr := f.callJSONWithBody(ctx, &opts, &reqBody, &respData)
 		return f.shouldRetry(resp, callErr)
 	})
 	
@@ -719,7 +717,7 @@ func (f *Fs) getUploadDomain(ctx context.Context) (string, error) {
 		opts := f.newMetaOpts(ctx)
 		opts.Method = "GET"
 		opts.Path = "/upload/v2/file/domain"
-		resp, callErr := f.rest.CallJSON(ctx, &opts, nil, &respData)
+		resp, callErr := f.callJSONWithBody(ctx, &opts, nil, &respData)
 		return f.shouldRetry(resp, callErr)
 	})
 	
@@ -909,7 +907,7 @@ func (f *Fs) putChunked(ctx context.Context, in io.Reader, src fs.ObjectInfo, du
 		opts := f.newMetaOpts(ctx) // 假设你有这个辅助函数来创建元数据请求的opts
 		opts.Method = "POST"
 		opts.Path = "/upload/v2/file/create"
-		resp, err := f.rest.CallJSON(ctx, &opts, &createReqBody, &createRespData)
+		resp, err := f.callJSONWithBody(ctx, &opts, &createReqBody, &createRespData)
 		return f.shouldRetry(resp, err)
 	})
 	if err != nil {
@@ -956,7 +954,7 @@ func (f *Fs) putChunked(ctx context.Context, in io.Reader, src fs.ObjectInfo, du
 		completeOpts.Method = "POST"
 		completeOpts.Path = "/upload/v2/file/upload_complete"
 		var completeRespData ChunkedUploadCompleteResponse
-		resp, callErr := f.rest.CallJSON(ctx, &completeOpts, &completeReqBody, &completeRespData)
+		resp, callErr := f.callJSONWithBody(ctx, &completeOpts, &completeReqBody, &completeRespData)
 		if callErr != nil {
 			return f.shouldRetry(resp, callErr)
 		}
@@ -1223,7 +1221,7 @@ func (f *Fs) trashItems(ctx context.Context, fileIDs []int64) error {
 			opts := f.newMetaOpts(ctx)
 			opts.Method = "POST"
 			opts.Path = "/api/v1/file/trash"
-			resp, callErr := f.rest.CallJSON(ctx, &opts, &reqBody, &respData)
+			resp, callErr := f.callJSONWithBody(ctx, &opts, &reqBody, &respData)
 			return f.shouldRetry(resp, callErr)
 		})
 
@@ -1337,7 +1335,7 @@ func (f *Fs) internalMove(ctx context.Context, itemID int64, dstParentPath strin
 		opts := f.newMetaOpts(ctx)
 		opts.Method = "POST"
 		opts.Path = "/api/v1/file/move"
-		resp, callErr := f.rest.CallJSON(ctx, &opts, &reqBody, &respData)
+		resp, callErr := f.callJSONWithBody(ctx, &opts, &reqBody, &respData)
 		return f.shouldRetry(resp, callErr)
 	})
 	
@@ -1369,7 +1367,7 @@ func (f *Fs) internalRename(ctx context.Context, itemID int64, newName string) e
 		opts.Path = "/api/v1/file/name"
 
 		// 发送请求
-		resp, callErr := f.rest.CallJSON(ctx, &opts, &reqBody, &respData)
+		resp, callErr := f.callJSONWithBody(ctx, &opts, &reqBody, &respData)
 		return f.shouldRetry(resp, callErr)
 	})
 	
@@ -1504,7 +1502,10 @@ func (f *Fs) open(ctx context.Context, o *Object, options ...fs.OpenOption) (io.
 		opts.Method = "GET"
 		opts.Path = "/api/v1/file/download_info"
 		opts.Parameters = params
-		resp, callErr := f.rest.CallJSON(ctx, &opts, nil, &infoResp)
+		resp, callErr := f.callJSONWithBody(ctx, &opts, nil, &infoResp)
+		if callErr == nil && resp != nill{
+			return false, callErr
+		}
 		return f.shouldRetry(resp, callErr)
 	})
 	
@@ -1596,6 +1597,83 @@ var retryErrorCodes = []int{
 	504, // Gateway Time-out
 }
 
+
+import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"fmt"
+	"io"
+	"net/http"
+
+	"github.com/rclone/rclone/fs/fshttp"
+	"github.com/rclone/rclone/lib/rest"
+)
+
+
+// callJSONWithBody 类似于 rest.CallJSON，但它在解码JSON后不会关闭响应体，
+// 而是将响应体内容读入内存并用一个新的 io.ReadCloser 替换原始的 Body。
+// 这使得后续的函数（如 shouldRetry）仍然可以访问和读取响应体内容。
+//
+// 参数:
+//   - ctx:      请求的上下文
+//   - opts:     rest.Opts 请求选项
+//   - request:  要编码为JSON并作为请求体发送的数据（对于POST/PUT等），如果为nil则不发送请求体。
+//   - response: 用于解码JSON响应体的目标结构体指针。
+//
+// 返回:
+//   - *http.Response: HTTP响应对象，其Body可以被再次读取。
+//   - error:          在请求、读取或解码过程中发生的错误。
+func (f *Fs) callJSONWithBody(ctx context.Context, opts *rest.Opts, request interface{}, response interface{}) (*http.Response, error) {
+	// 1. 处理请求体 (如果存在)
+	if request != nil {
+		// 将请求对象编码为JSON
+		reqBytes, err := json.Marshal(request)
+		if err != nil {
+			return nil, fmt.Errorf("failed to marshal request: %w", err)
+		}
+		// 设置请求体和Content-Type头
+		opts.Body = bytes.NewReader(reqBytes)
+		opts.SetHeader("Content-Type", "application/json")
+	}
+
+	// 2. 设置期望的响应类型
+	opts.SetHeader("Accept", "application/json")
+
+	// 3. 调用底层的 rest.Call
+	resp, err := f.rest.Call(ctx, opts)
+	// 如果调用本身就出错了（例如网络问题），直接返回
+	if err != nil {
+		return resp, err
+	}
+
+	// 4. 读取并解码响应体
+	// 从响应体中读取所有字节
+	bodyBytes, readErr := io.ReadAll(resp.Body)
+	// 立即关闭原始的响应体，这是良好实践
+	_ = resp.Body.Close()
+	if readErr != nil {
+		return resp, fmt.Errorf("failed to read response body: %w", readErr)
+	}
+
+	// 5. 关键步骤：用读取到的内容重新创建一个可读的Body
+	// 这样，调用此函数的代码（以及shouldRetry）就可以再次读取它
+	resp.Body = io.NopCloser(bytes.NewReader(bodyBytes))
+
+	// 6. 将读取到的字节解码到 response 结构体中
+	// 即使解码失败，我们仍然返回 resp，以便 shouldRetry 可以检查原始的 bodyBytes
+	if response != nil {
+		if unmarshalErr := json.Unmarshal(bodyBytes, response); unmarshalErr != nil {
+			// 返回解码错误，但 resp 对象包含了可重新读取的 Body
+			return resp, fmt.Errorf("failed to unmarshal response body: %w", unmarshalErr)
+		}
+	}
+
+	// 7. 成功返回
+	return resp, nil
+}
+
+
 // shouldRetry 是一个健壮的重试决策函数，它封装了所有重试逻辑。
 // 这个版本严格遵循“优先检查响应（resp），其次检查错误（err）”的原则。
 func (f *Fs) shouldRetry(resp *http.Response, err error) (bool, error) {
@@ -1604,6 +1682,8 @@ func (f *Fs) shouldRetry(resp *http.Response, err error) (bool, error) {
 	// 步骤 1: 优先处理 `resp` (如果存在)
 	// ----------------------------------------------------------------
 	if resp != nil {
+		defer resp.Body.Close()
+	
 		// 如果我们收到了响应，那么HTTP状态码是首要的判断依据。
 
 		// 情况 A: HTTP状态码是 200 OK，需要检查响应体内的业务码。
@@ -1616,7 +1696,7 @@ func (f *Fs) shouldRetry(resp *http.Response, err error) (bool, error) {
 				return false, fmt.Errorf("读取200 OK响应体失败: %w", readErr)
 			}
 			// 【关键操作】用一个新的、可重复读的Reader替换掉原始的、已被消耗的Body。
-			resp.Body = io.NopCloser(bytes.NewReader(bodyBytes))
+			//resp.Body = io.NopCloser(bytes.NewReader(bodyBytes))
 
 			// 解码JSON来检查业务 `code`。
 			var result CommonResponse
