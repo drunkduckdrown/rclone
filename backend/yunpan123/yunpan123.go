@@ -842,6 +842,7 @@ func (f *Fs) putSingle(ctx context.Context, in io.Reader, src fs.ObjectInfo, dup
 		// 3. 执行请求
 		resp, doErr := f.rest.Call(ctx, &opts)
 		if resp.StatusCode != http.StatusOK{
+			fmt.Errorf("单步上传状态码: %d", resp.StatusCode)
 			should, retryErr := f.shouldRetry(resp, doErr)
 			if retryErr != nil {
 				if resp != nil {
@@ -859,7 +860,7 @@ func (f *Fs) putSingle(ctx context.Context, in io.Reader, src fs.ObjectInfo, dup
 		var respData SingleUploadResponse
 		if err := json.NewDecoder(resp.Body).Decode(&respData); err != nil {
 			// 解码失败可能意味着服务器返回了非预期的成功响应，这通常是不可重试的错误
-			return false, fmt.Errorf("解码成功响应失败: %w", err)
+			return false, fmt.Errorf("解码失败: %w", err)
 		}
 		if !respData.Data.Completed {
 			// API业务逻辑报告未完成，这可能是一个服务器端问题，标记为不可重试错误
