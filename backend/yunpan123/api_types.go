@@ -11,7 +11,13 @@ import (
 type CommonResponse struct {
 	Code int    `json:"code"` // 假设是 API 返回的状态码，0表示成功
 	Msg  string `json:"msg"`  // 假设是 API 返回的消息
-	// Data interface{} `json:"data"` // 具体数据部分，通常是嵌套的
+	Data interface{} `json:"data"` // 具体数据部分，通常是嵌套的
+}
+
+// baseResponse 是所有API响应共有的基础结构，用于解析code和msg
+type baseResponse struct {
+	Code    int    `json:"code"`
+	Message string `json:"message"`
 }
 
 
@@ -130,6 +136,13 @@ type ChunkedUploadCompleteResponse struct {
 		Completed bool  `json:"completed"`
 		FileID    int64 `json:"fileID"`
 	} `json:"data"`
+}
+
+// chunkJob 定义了上传任务的数据结构，用于在生产者和消费者之间传递
+type chunkJob struct {
+	number int          // 分片序号
+	size   int64        // 分片大小
+	reader io.Reader    // 分片数据的Reader
 }
 
 // TrashRequest 对应 /api/v1/file/trash 的请求体

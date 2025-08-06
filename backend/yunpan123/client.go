@@ -10,7 +10,6 @@ import (
 	"time"
 
 	"github.com/rclone/rclone/fs"
-	"github.com/rclone/rclone/fs/fserrors"
 	"github.com/rclone/rclone/fs/fshttp"
 	"github.com/rclone/rclone/backend/yunpan123/tokenmanager"
 )
@@ -27,168 +26,118 @@ type APIClient struct {
 }
 
 // NewAPIClient 创建一个新的 APIClient 实例
-func NewAPIClient(baseURL string, tm *tokenmanager.Manager) *APIClient {
-	// rclone的fshttp.NewClient会根据rclone的全局配置（如--timeout）创建客户端
-	// 我们在这里创建两个，一个用于元数据，一个用于数据传输
-	// 如果用户没有设置 --timeout，默认是 5 分钟，对于元数据来说可能太长
-	// 但我们可以依赖 context 的超时来控制。
-	// 对于数据传输，我们需要一个更长的超时，所以我们直接从rclone配置创建。
+func NewAPIClient(ctx context.Context, baseURL string, tm *tokenmanager.Manager) *APIClient {
+	// 对于数据传输，我们需要一个更长的超时
 	return &APIClient{
-		metaClient:   fshttp.NewClient(fs.Config),
-		dataClient:   fshttp.NewClient(fs.Config), // dataClient也使用rclone的配置，因为--timeout通常用于数据传输
+		metaClient:             &http.Client{
+									// 设置一个总的请求超时。
+									Timeout: 8 * time.Second,},
+		uploadClient:           &http.Client{
+									// 我们给一个更宽裕的时间
+									Timeout: 10 * time.Minute,
+
+									Transport: &http.Transport{
+										DialContext: (&net.Dialer{
+											Timeout:   10 * time.Second, // 连接时间可以稍长一点
+											KeepAlive: 90 * time.Second,
+										}).DialContext,
+
+										TLSHandshakeTimeout: 10 * time.Second,
+
+										// 响应头超时也需要更长，因为服务器可能需要一些时间来接收和校验分片。
+										ResponseHeaderTimeout: 60 * time.Second,
+
+										// 允许更多的并发上传连接
+										MaxIdleConns:        100,
+										MaxIdleConnsPerHost: 20, // 假设你可能并发上传多个分片
+										IdleConnTimeout:     90 * time.Second,
+										
+										ExpectContinueTimeout: 1 * time.Second,},},
+		downloadClient:         &http.Client{
+									// !!! 关键：不设置总超时 (Timeout: 0) !!!
+									// 因为我们不知道文件有多大，下载可能需要几小时。
+									// 超时控制完全交给底层的Transport。
+									Timeout: 0, 
+
+									Transport: &http.Transport{
+										// 连接和握手依然要快，快速判断服务是否可用
+										DialContext: (&net.Dialer{
+											Timeout:   10 * time.Second,
+											KeepAlive: 90 * time.Second,
+										}).DialContext,
+										TLSHandshakeTimeout: 10 * time.Second,
+
+										// 核心：设置一个合理的响应头超时。
+										// 一旦服务器开始发送数据，我们就可以一直等下去。
+										ResponseHeaderTimeout: 60 * time.Second, // 1分钟内服务器必须开始响应
+
+										// 下载任务通常是长连接，可以设置较长的空闲超时
+										MaxIdleConns:        100,
+										MaxIdleConnsPerHost: 10,
+										IdleConnTimeout:     90 * time.Second,},},
 		BaseURL:      baseURL,
 		TokenManager: tm,
 	}
 }
 
-// baseResponse 是所有API响应共有的基础结构，用于解析code和msg
-type baseResponse struct {
-	Code    int    `json:"code"`
-	Message string `json:"message"`
-}
-
-// do sends a request and handles retries for JSON-based APIs (metadata).
-// It reads the response body to check for API-level errors in the JSON.
-func (c *APIClient) do(ctx context.Context, req *http.Request) (*http.Response, []byte, error) {
+// Do sends a request for JSON-based APIs (metadata).
+func (c *APIClient) Do(ctx context.Context, req *http.Request) (*http.Response, error) {
 	var (
 		resp      *http.Response
-		respBody  []byte
 		err       error
 		lastError error
 	)
 
-	// rclone的pacer会自动处理重试的退避逻辑
-	pacer := fs.NewPacer(ctx)
+	// 添加最新的认证头
+	token := c.TokenManager.GetToken()
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Platform", "open_platform")
 
-	for i := 0; i < fs.Config.Retries; i++ {
-		// 添加最新的认证头
-		token := c.TokenManager.GetToken()
-		req.Header.Set("Authorization", "Bearer "+token)
-		req.Header.Set("Platform", "open_platform")
-
-		// 使用元数据客户端发送请求
-		resp, err = c.metaClient.Do(req.WithContext(ctx))
-		if err != nil {
-			lastError = fmt.Errorf("request failed: %w", err)
-			fs.Debugf(nil, "API metadata request error (attempt %d/%d): %v", i+1, fs.Config.Retries, err)
-			if pacer.Retry() {
-				continue
-			}
-			break // 不再重试
-		}
-
-		// 读取响应体，因为我们需要检查JSON中的code
-		respBody, err = io.ReadAll(resp.Body)
-		resp.Body.Close() // 立即关闭
-		if err != nil {
-			lastError = fmt.Errorf("failed to read response body: %w", err)
-			fs.Debugf(nil, "API metadata response read error (attempt %d/%d): %v", i+1, fs.Config.Retries, err)
-			if pacer.Retry() {
-				continue
-			}
-			break
-		}
-
-		// 解析基础响应，检查code
-		var baseResp baseResponse
-		if jsonErr := json.Unmarshal(respBody, &baseResp); jsonErr != nil {
-			// 如果无法解析JSON，可能是一个非标准的错误页面（如网关错误）
-			lastError = fmt.Errorf("API request failed with status %s and non-JSON body: %s", resp.Status, string(respBody))
-			fs.Debugf(nil, "API metadata response non-JSON error (attempt %d/%d): %v", i+1, fs.Config.Retries, lastError)
-			// 对于服务器端错误（5xx），可以重试
-			if resp.StatusCode >= 500 && pacer.Retry() {
-				continue
-			}
-			break
-		}
-
-		// 根据JSON中的code处理重试逻辑
-		switch baseResp.Code {
-		case 0: // 成功
-			return resp, respBody, nil
-		case 401: // Token 过期
-			fs.Logf(nil, "[APIClient] Received API code 401 (Unauthorized). Refreshing token...")
-			refreshErr := c.TokenManager.GetAndStoreToken("/renew_token")
-			if refreshErr != nil {
-				return nil, nil, fmt.Errorf("failed to renew token after API code 401: %w", refreshErr)
-			}
-			// Token已刷新，立即重试
-			continue
-		case 429: // 速率限制
-			fs.Logf(nil, "[APIClient] Received API code 429 (Too Many Requests). Pacer will handle backoff.")
-			pacer.Pace(resp.StatusCode) // 即使是200 OK，也用pacer来退避
-			continue
-		default: // 其他API错误
-			lastError = fmt.Errorf("API returned an error: code=%d, msg='%s'", baseResp.Code, baseResp.Message)
-			// 对于某些错误，可能不想重试，但为了简单起见，我们让pacer决定
-			fs.Debugf(nil, "API metadata request returned error (attempt %d/%d): %v", i+1, fs.Config.Retries, lastError)
-			if pacer.Retry() {
-				continue
-			}
-			break
-		}
+	// 使用元数据客户端发送请求
+	resp, err = c.metaClient.Do(req)
+	if err != nil {
+		lastError = fmt.Errorf("request failed: %w", err)
+		fs.Debugf(nil, "API metadata request error : %v", err)
 	}
-
-	if lastError == nil {
-		lastError = fserrors.ErrMaxTriesExceeded
-	}
-	return nil, nil, lastError
+	
+	return resp, err
 }
 
-// doUpload sends a request for data transfer (upload). It does not read the response body by default.
-// It uses fshttp.Do for robust, streaming-safe retries.
-func (c *APIClient) doUpload(ctx context.Context, req *http.Request) (*http.Response, error) {
-	var resp *http.Response
-	var err error
+// DoUpload sends a request for data transfer (upload). It does not read the response body by default.
+func (c *APIClient) DoUpload(ctx context.Context, req *http.Request) (*http.Response, error) {
+	var (
+		resp      *http.Response
+		err       error
+		lastError error
+	)
 
-	addAuthHeaders := func(req *http.Request) {
-		token := c.TokenManager.GetToken()
-		req.Header.Set("Authorization", "Bearer "+token)
-		req.Header.Set("Platform", "open_platform")
+	// 添加最新的认证头
+	token := c.TokenManager.GetToken()
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Platform", "open_platform")
+	
+	// 使用上传客户端发送请求
+	resp, err = c.uploadClient.Do(req)
+	if err != nil {
+		lastError = fmt.Errorf("request failed: %w", err)
+		fs.Debugf(nil, "API fileupload request error : %v", err)
 	}
+	return resp, err
+}
 
-	shouldRetry := func(resp *http.Response, err error) (bool, error) {
-		if err != nil {
-			// 对于网络错误，rclone的默认行为是重试
-			return fs.ShouldRetry(ctx, resp, err)
-		}
-
-		// 对于上传，我们必须读取响应体来检查JSON code
-		bodyBytes, readErr := io.ReadAll(resp.Body)
-		resp.Body.Close() // 立即关闭
-		if readErr != nil {
-			return false, fmt.Errorf("failed to read upload response body for retry check: %w", readErr)
-		}
-		// 把body重新放回去，以便上层可以再次读取
-		resp.Body = io.NopCloser(bytes.NewReader(bodyBytes))
-
-		var baseResp baseResponse
-		if jsonErr := json.Unmarshal(bodyBytes, &baseResp); jsonErr != nil {
-			// 如果无法解析，则按HTTP状态码处理
-			return fs.ShouldRetry(ctx, resp, err)
-		}
-
-		switch baseResp.Code {
-		case 401:
-			fs.Logf(nil, "[APIClient-Upload] Received API code 401. Refreshing token...")
-			if refreshErr := c.TokenManager.GetAndStoreToken("/renew_token"); refreshErr != nil {
-				return false, fmt.Errorf("failed to renew token for upload: %w", refreshErr)
-			}
-			return true, nil // 需要重试
-		case 429:
-			fs.Logf(nil, "[APIClient-Upload] Received API code 429. Pacer will handle backoff.")
-			// 在 fshttp.Do 外部没有 pacer，但 fs.ShouldRetry 会处理 429 状态码
-			return fs.ShouldRetry(ctx, resp, err)
-		case 0: // 成功
-			return false, nil // 不需要重试
-		default:
-			// 其他API错误，认为是不可恢复的
-			return false, fmt.Errorf("upload API returned an error: code=%d, msg='%s'", baseResp.Code, baseResp.Message)
-		}
+// DoDownload sends a request for data transfer (download). It does not read the response body by default.
+func (c *APIClient) DoDownload(ctx context.Context, req *http.Request) (*http.Response, error) {
+	var (
+		resp      *http.Response
+		err       error
+		lastError error
+	)
+	
+	// 使用下载客户端发送请求
+	resp, err = c.downloadClient.Do(req)
+	if err != nil {
+		lastError = fmt.Errorf("request failed: %w", err)
+		fs.Debugf(nil, "API filedownload request error : %v", err)
 	}
-
-	addAuthHeaders(req)
-	// 使用rclone的fshttp.Do，它能正确处理流式请求的重试
-	resp, err = fshttp.Do(ctx, c.dataClient, req, shouldRetry)
 	return resp, err
 }
