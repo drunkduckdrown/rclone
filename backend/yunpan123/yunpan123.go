@@ -1184,40 +1184,20 @@ func (f *Fs) Put(ctx context.Context, in io.Reader, src fs.ObjectInfo, options .
 func (o *Object) Update(ctx context.Context, in io.Reader, src fs.ObjectInfo, options ...fs.OpenOption) error {
 	// To overwrite, we must first delete the existing object(s) with the same name.
 	// This is a more robust approach than relying solely on the 'duplicate' flag.
-	err := f.deleteExisting(ctx, src.Remote())
-	if err != nil {
-		return fmt.Errorf("failed to delete existing object before update: %w", err)
-	}
-
 	if src.Size() < 0 || src.Size() > singleUploadCutoff {
-		fs.Debugf(src, "Using chunked upload for update (size: %d)", src.Size())
-		o, err = f.putChunked(ctx, in, src, duplicatePolicyOverwrite)
-		if err != nil {
-		return err
+		o.fs.Debugf(src, "Using chunked upload for update (size: %d)", src.Size())
+		new_o, err := o.fs.putChunked(ctx, in, src, duplicatePolicyOverwrite)
+		if err == nil{
+			o = new_o
 		}
-		return nil
+		return err
 	}
-	fs.Debugf(src, "Using single part upload for update (size: %d)", src.Size())
-	o, err = f.putSingle(ctx, in, src, duplicatePolicyOverwrite)
-		if err != nil {
-		return err
-		}
-		return nil
-}
-
-
-// deleteExisting is a helper for Update to remove old versions of a file.
-func (f *Fs) deleteExisting(ctx context.Context, remote string) error {
-    // This is a simplified implementation. A real one would handle multiple files
-    // with the same name if the backend supports it.
-    obj, err := f.NewObject(ctx, remote)
-    if err != nil {
-        if errors.Is(err, fs.ErrorObjectNotFound) {
-            return nil // Nothing to delete
-        }
-        return err
-    }
-    return obj.Remove(ctx)
+	o.fs.Debugf(src, "Using single part upload for update (size: %d)", src.Size())
+	new_o, err := o.fs.putSingle(ctx, in, src, duplicatePolicyOverwrite)
+	if err == nil{
+		o = new_o
+	}
+	return err
 }
 
 // trashItems a list of file or directory IDs.
