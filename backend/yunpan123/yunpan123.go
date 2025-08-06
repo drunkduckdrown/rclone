@@ -357,9 +357,6 @@ func (f *Fs) listDir(ctx context.Context, parentID int64, parentPath string, las
 		params.Set("lastFileId", strconv.FormatInt(lastFileID, 10))
 	}
 
-	// 构建请求
-	apiEndpoint := "/api/v2/file/list"
-	
 
 	// 发送请求
 	var respData FileListV2Response
@@ -367,7 +364,7 @@ func (f *Fs) listDir(ctx context.Context, parentID int64, parentPath string, las
 	err := f.pacer.Call(func() (bool, error) {
 		opts := f.newMetaOpts(ctx)
 		opts.Method = "GET"
-		opts.Path = f.apiBaseURL + apiEndpoint
+		opts.Path = "/api/v2/file/list"
 		opts.Parameters = params
 		resp, callErr := f.rest.CallJSON(ctx, &opts, nil, &respData)
 		return f.shouldRetry(resp, callErr)
@@ -543,15 +540,13 @@ func (f *Fs) Hashes() hash.Set {
 func (f *Fs) About(ctx context.Context) (*fs.Usage, error) {
 	fs.Debugf(nil, "[123CloudFs] Getting About information...")
 
-	// 构建请求
-	apiEndpoint := "/api/v1/user/info"
 
 	// 发送请求
 	var respData UserInfoResponse
 	err := f.pacer.Call(func() (bool, error) {
 		opts := f.newMetaOpts(ctx)
 		opts.Method = "GET"
-		opts.Path = f.apiBaseURL + apiEndpoint
+		opts.Path = "/api/v1/user/info"
 		resp, callErr := f.rest.CallJSON(ctx, &opts, nil, &respData)
 		return f.shouldRetry(resp, callErr)
 	})
@@ -664,9 +659,6 @@ func (f *Fs) Mkdir(ctx context.Context, dir string) error {
 	
 	// 4.构建请求
 
-	// 构建请求
-	apiEndpoint := "/upload/v1/file/mkdir"
-
 	reqBody := MkdirRequest{
 		ParentID: parentID,
 		Name:     newDirName,
@@ -679,7 +671,7 @@ func (f *Fs) Mkdir(ctx context.Context, dir string) error {
 	err = f.pacer.Call(func() (bool, error) {
 		opts := f.newMetaOpts(ctx)
 		opts.Method = "POST"
-		opts.Path = f.apiBaseURL + apiEndpoint
+		opts.Path = "/upload/v1/file/mkdir"
 		resp, callErr := f.rest.CallJSON(ctx, &opts, &reqBody, &respData)
 		return f.shouldRetry(resp, callErr)
 	})
@@ -722,16 +714,13 @@ func (f *Fs) getUploadDomain(ctx context.Context) (string, error) {
 	
 
 
-	// 构建请求
-	apiEndpoint := "/upload/v2/file/domain"
-
 	// 发送请求
 	var respData UploadDomainResponse
 	
 	err := f.pacer.Call(func() (bool, error) {
 		opts := f.newMetaOpts(ctx)
 		opts.Method = "GET"
-		opts.Path = f.apiBaseURL + apiEndpoint
+		opts.Path = "/upload/v2/file/domain"
 		resp, callErr := f.rest.CallJSON(ctx, &opts, nil, &respData)
 		return f.shouldRetry(resp, callErr)
 	})
@@ -797,7 +786,8 @@ func (f *Fs) putSingle(ctx context.Context, in io.Reader, src fs.ObjectInfo, dup
 		// 1. 在每次循环内，重新获取最新的认证信息
 		opts := f.newUploadOpts(ctx) // 使用你为上传创建的辅助函数
 		opts.Method = "POST"
-		opts.Path = uploadDomain + "/upload/v2/file/single/create"
+		opts.RootURL =uploadDomain
+		opts.Path = "/upload/v2/file/single/create"
 		opts.NoResponse = true // 使用rest.Do，需要自己处理响应
 
 		// 2. 在每次循环内，重新构建 multipart 请求体
@@ -882,7 +872,7 @@ func (f *Fs) putSingle(ctx context.Context, in io.Reader, src fs.ObjectInfo, dup
 	}
 	
 	fs.Debugf(src, "单步上传成功，文件ID: %s", finalFileInfo.FileId)
-	return f.newObjectFromInfo(ctx, finalFileInfo)
+	return newObject(ctx, f, src.Remote(), finalFileInfo)
 }
 
 
@@ -931,10 +921,14 @@ func (f *Fs) putChunked(ctx context.Context, in io.Reader, src fs.ObjectInfo, du
 	// 检查是否已秒传
 	if createRespData.Data.Reuse {
 		fs.Debugf(src, "文件已存在，秒传成功")
-		// 假设你有一个 newObjectFromInfo 函数来创建 fs.Object
-		return f.newObjectFromInfo(ctx, &FileInfoV2{
-			FileId: createRespData.Data.FileID,
-			// ... 填充其他字段 ...
+		return newObject(ctx, f, src.Remote(), &FileInfoV2{
+			FileId:         createRespData.Data.FileID,
+			Filename:       fileName,
+			ParentFileId:   parentID,
+			Type:           0,
+			Etag:           md5sum,
+			Size:           src.Size(),
+			UpdateAt:       time.Now().Format("2006-01-02 15:04:05"),
 		})
 	}
 
@@ -944,7 +938,7 @@ func (f *Fs) putChunked(ctx context.Context, in io.Reader, src fs.ObjectInfo, du
 	if len(createRespData.Data.Servers) == 0 {
 		return nil, errors.New("API未返回上传服务器地址")
 	}
-	uploadServerURL := createRespData.Data.Servers[0] + "/upload/v2/file/slice"
+	uploadServerURL := createRespData.Data.Servers[0]
 
 	err = f.uploadAllChunks(ctx, in, src, uploadServerURL, preuploadID, sliceSize)
 	if err != nil {
@@ -956,7 +950,7 @@ func (f *Fs) putChunked(ctx context.Context, in io.Reader, src fs.ObjectInfo, du
 
 
 
-	var finalFileID string
+	finalFileID := -1
 	err = f.pacer.Call(func() (bool, error) {
 	// --- 步骤 3: 发送完成请求，确认文件合并 ---
 		completeReqBody := ChunkedUploadCompleteRequest{PreuploadID: preuploadID}
@@ -970,7 +964,7 @@ func (f *Fs) putChunked(ctx context.Context, in io.Reader, src fs.ObjectInfo, du
 		}
 		if completeRespData.Data.Completed {
 			finalFileID = completeRespData.Data.FileID
-			fs.Debugf(src, "服务器确认文件合并完成，文件ID: %s", finalFileID)
+			fs.Debugf(src, "服务器确认文件合并完成，文件ID: %d", finalFileID)
 			return false, nil // 成功，停止重试
 		}
 		fs.Debugf(src, "文件仍在合并中，稍后重试...")
@@ -980,7 +974,7 @@ func (f *Fs) putChunked(ctx context.Context, in io.Reader, src fs.ObjectInfo, du
 	if err != nil {
 		return nil, fmt.Errorf("完成分片上传请求失败: %w", err)
 	}
-	if finalFileID == "" {
+	if finalFileID == -1 {
 		return nil, errors.New("文件合并完成，但未获取到最终文件ID")
 	}
 	
@@ -1000,6 +994,13 @@ func (f *Fs) putChunked(ctx context.Context, in io.Reader, src fs.ObjectInfo, du
 // ==============================================================================
 // 3. 并发控制与分片生产者/消费者
 // ==============================================================================
+
+
+// chunkJob 定义了上传任务的数据结构，直接持有分片数据
+type chunkJob struct {
+	number int    // 分片序号, 从1开始
+	data   []byte // 分片数据
+}
 
 // uploadAllChunks 负责管理分片的并发上传
 func (f *Fs) uploadAllChunks(ctx context.Context, in io.Reader, src fs.ObjectInfo, uploadServerURL, preuploadID string, sliceSize int64) error {
@@ -1117,7 +1118,8 @@ func (f *Fs) uploadChunk(ctx context.Context, url string, preuploadID string, fi
 		// 1. 在每次循环内，重新获取最新的认证信息
 		opts := f.newUploadOpts(ctx) // 假设你有上传专用的辅助函数
 		opts.Method = "POST"
-		opts.Path = url // 这是一个完整的URL
+		opts.RootURL = url
+		opts.Path = "/upload/v2/file/slice"
 		opts.NoResponse = true
 
 		// 2. 在每次循环内，重新构建multipart请求体
@@ -1142,7 +1144,6 @@ func (f *Fs) uploadChunk(ctx context.Context, url string, preuploadID string, fi
 		}
 
 		opts.Body = &bodyBuf
-		opts.ContentLength = int64(bodyBuf.Len())
 		contentLength := int64(bodyBuf.Len())
 		opts.ContentLength = &contentLength
 		opts.ContentType = multipartWriter.FormDataContentType()
@@ -1235,8 +1236,6 @@ func (f *Fs) trashItems(ctx context.Context, fileIDs []int64) error {
 		}
 		batch := fileIDs[i:end]
 		reqBody := TrashRequest{FileIDs: batch}
-		// 构建请求
-		apiEndpoint := "/api/v1/file/trash"
 		
 
 		// 发送请求
@@ -1244,7 +1243,7 @@ func (f *Fs) trashItems(ctx context.Context, fileIDs []int64) error {
 		err := f.pacer.Call(func() (bool, error) {
 			opts := f.newMetaOpts(ctx)
 			opts.Method = "POST"
-			opts.Path = f.apiBaseURL + apiEndpoint
+			opts.Path = "/api/v1/file/trash"
 			resp, callErr := f.rest.CallJSON(ctx, &opts, &reqBody, &respData)
 			return f.shouldRetry(resp, callErr)
 		})
@@ -1350,8 +1349,6 @@ func (f *Fs) internalMove(ctx context.Context, itemID int64, dstParentPath strin
 		ToParentFileID: dstParentID,
 	}
 	
-	// 构建请求
-	apiEndpoint := "/api/v1/file/move"
 	
 
 	// 发送请求
@@ -1360,7 +1357,7 @@ func (f *Fs) internalMove(ctx context.Context, itemID int64, dstParentPath strin
 	err = f.pacer.Call(func() (bool, error) {
 		opts := f.newMetaOpts(ctx)
 		opts.Method = "POST"
-		opts.Path = f.apiBaseURL + apiEndpoint
+		opts.Path = "/api/v1/file/move"
 		resp, callErr := f.rest.CallJSON(ctx, &opts, &reqBody, &respData)
 		return f.shouldRetry(resp, callErr)
 	})
@@ -1384,10 +1381,9 @@ func (f *Fs) internalRename(ctx context.Context, itemID int64, newName string) e
 	}
 	
 	// 构建请求
-	apiEndpoint := "/api/v1/file/name"
 	opts := f.newMetaOpts(ctx)
 	opts.Method = "POST"
-	opts.Path = f.apiBaseURL + apiEndpoint
+	opts.Path = "/api/v1/file/name"
 
 	// 发送请求
 	var respData CommonResponse
@@ -1518,8 +1514,6 @@ func (f *Fs) open(ctx context.Context, o *Object, options ...fs.OpenOption) (io.
 	params := url.Values{}
 	params.Set("fileId", strconv.FormatInt(o.id, 10))
 	
-	// 构建请求
-	apiEndpoint := "/api/v1/file/download_info"
 
 
 	// 发送请求
@@ -1528,7 +1522,7 @@ func (f *Fs) open(ctx context.Context, o *Object, options ...fs.OpenOption) (io.
 	err := f.pacer.Call(func() (bool, error) {
 		opts := f.newMetaOpts(ctx)
 		opts.Method = "GET"
-		opts.Path = f.apiBaseURL + apiEndpoint
+		opts.Path = "/api/v1/file/download_info"
 		opts.Parameters = params
 		resp, callErr := f.rest.CallJSON(ctx, &opts, nil, &infoResp)
 		return f.shouldRetry(resp, callErr)
@@ -1547,8 +1541,10 @@ func (f *Fs) open(ctx context.Context, o *Object, options ...fs.OpenOption) (io.
 
 	// --- 步骤 2: 向下载 URL 发起请求，处理 Range ---
 	
-	downloadOpts := o.fs.newDownloadOpts(options...)
-	downloadOpts.Path = downloadURL
+	downloadOpts := f.newDownloadOpts(options...)
+	parsedURL, err := url.Parse(downloadURL)
+	downloadOpts.RootURL = fmt.Sprintf("%s://%s", parsedURL.Scheme, parsedURL.Host)
+	downloadOpts.Path = parsedURL.RequestURI()
 	downloadOpts.Method = "GET"
 	
 	var downloadResp *http.Response
@@ -1574,7 +1570,8 @@ func (f *Fs) open(ctx context.Context, o *Object, options ...fs.OpenOption) (io.
 // 返回元数据请求的 rest.Opts
 func (f *Fs) newMetaOpts(ctx context.Context) rest.Opts {
 	return rest.Opts{
-		Timeout: global_timeout,
+		Timeout:      global_timeout,
+		RootURL:         f.apiBaseURL
 		ExtraHeaders: map[string]string{
 			"Authorization": "Bearer " + f.tokenMgr.GetAndStoreToken("/get_token"),
 			"Platform":      "open_platform",
