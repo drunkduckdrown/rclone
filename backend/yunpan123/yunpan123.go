@@ -872,8 +872,7 @@ func (f *Fs) putSingle(ctx context.Context, in io.Reader, src fs.ObjectInfo, dup
 
 			return false, nil // 明确表示成功，停止 pacer 循环
 			
-		}
-		else if !respData.Data.Completed {
+		} else if !respData.Data.Completed {
 			// API业务逻辑报告未完成，这可能是一个服务器端问题，标记为不可重试错误
 			return false, errors.New("API报告上传未完成")
 		}
