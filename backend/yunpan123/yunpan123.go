@@ -985,6 +985,7 @@ func (f *Fs) putChunked(ctx context.Context, in io.Reader, src fs.ObjectInfo, du
 			return false, nil // 成功，停止重试
 		}
 		fs.Debugf(src, "文件仍在合并中，稍后重试...")
+		time.Sleep(1 * time.Second)
 		return true, nil // 服务器还在处理，继续轮询（pacer会等待）
 	})
 
