@@ -858,7 +858,7 @@ func (f *Fs) putSingle(ctx context.Context, in io.Reader, src fs.ObjectInfo, dup
 			// 解码失败可能意味着服务器返回了非预期的成功响应，这通常是不可重试的错误
 			return false, fmt.Errorf("解码失败: %w", err)
 		}
-		if respData.Data.FileID != nil && respData.Data.FileID > 0 {
+		if respData.Data.FileID > 0 {
 			// 5. 将成功的结果保存到外部变量
 			finalFileInfo = &FileInfoV2{
 				FileId:       respData.Data.FileID,
@@ -876,6 +876,7 @@ func (f *Fs) putSingle(ctx context.Context, in io.Reader, src fs.ObjectInfo, dup
 			// API业务逻辑报告未完成，这可能是一个服务器端问题，标记为不可重试错误
 			return false, errors.New("API报告上传未完成")
 		}
+		return false, nil //没有获取到fileId，但上传完成了
 
 	})
 
