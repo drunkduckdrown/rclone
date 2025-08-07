@@ -888,7 +888,7 @@ func (f *Fs) putSingle(ctx context.Context, in io.Reader, src fs.ObjectInfo, dup
 		return nil, errors.New("单步上传完成，但未能获取到文件信息")
 	}
 	
-	fs.Debugf(src, "单步上传成功，文件ID: %s", finalFileInfo.FileId)
+	fs.Debugf(src, "单步上传成功，文件ID: %d", finalFileInfo.FileId)
 	return newObject(ctx, f, src.Remote(), finalFileInfo)
 }
 
