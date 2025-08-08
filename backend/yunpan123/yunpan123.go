@@ -43,14 +43,14 @@ const (
 	duplicatePolicyOverwrite                    = 2
 	//maxTries                                  = 10
 	minSleep1                                   = 1100 * time.Millisecond
-	maxSleep1                                   = 2000 * time.Millisecond
+	maxSleep1                                   = 2200 * time.Millisecond
 	minSleep2                                   = 550 * time.Millisecond
-	maxSleep2                                   = 1000 * time.Millisecond
+	maxSleep2                                   = 1500 * time.Millisecond
 	minSleep3                                   = 360 * time.Millisecond
 	maxSleep3                                   = 1000 * time.Millisecond
 	minSleepx                                   = 10 * time.Millisecond
 	maxSleepx                                   = 1000 * time.Millisecond
-	decayConstant                               = 1.2 // bigger for slower decay, exponential
+	decayConstant                               = 2 // bigger for slower decay, exponential
 	dir_cacheTTL                                = 15 * time.Second
 	connection_timeout                          = 10 * time.Second
 	set_transfers                               = 5
