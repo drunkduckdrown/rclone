@@ -38,19 +38,22 @@ import (
 )
 
 const (
-	singleUploadCutoff = 16 * 1024 * 1024
-	duplicatePolicyRename = 1 //  1 代表重命名
-	duplicatePolicyOverwrite = 2
-	//maxTries      = 10
-	minSleep      = 10 * time.Millisecond
-	maxSleep      = 2 * time.Second
-	decayConstant = 2 // bigger for slower decay, exponential
-	dir_cacheTTL  = 15 * time.Second
-	connection_timeout = 10 * time.Second
-	//global_timeout     = 15 * time.Second
-	//upload_timeout     = 15 * time.Minute
-	//download_timeout   = 0
-	set_transfers          = 5
+	singleUploadCutoff                          = 16 * 1024 * 1024
+	duplicatePolicyRename                       = 1 //  1 代表重命名
+	duplicatePolicyOverwrite                    = 2
+	//maxTries                                  = 10
+	minSleep1                                   = 1100 * time.Millisecond
+	maxSleep1                                   = 2000 * time.Millisecond
+	minSleep2                                   = 550 * time.Millisecond
+	maxSleep2                                   = 1000 * time.Millisecond
+	minSleep3                                   = 360 * time.Millisecond
+	maxSleep3                                   = 1000 * time.Millisecond
+	minSleepx                                   = 10 * time.Millisecond
+	maxSleepx                                   = 1000 * time.Millisecond
+	decayConstant                               = 1.2 // bigger for slower decay, exponential
+	dir_cacheTTL                                = 15 * time.Second
+	connection_timeout                          = 10 * time.Second
+	set_transfers                               = 5
 )
 
 type Object struct {
@@ -166,7 +169,15 @@ type Fs struct {
 	apiBaseURL string
 	opt      Options           // 配置
 	ci       *fs.ConfigInfo // global config
-	pacer    *fs.Pacer      // rclone 提供的限速器，用于控制 API 请求频率
+	pacer_about    *fs.Pacer      // rclone 提供的限速器，用于控制 API 请求频率
+	pacer_list    *fs.Pacer
+	pacer_trash    *fs.Pacer
+	pacer_move    *fs.Pacer
+	pacer_rename    *fs.Pacer
+	pacer_mkdir    *fs.Pacer
+	pacer_create    *fs.Pacer
+	pacer_transfer    *fs.Pacer
+	pacer_complete    *fs.Pacer
 	//client   *APIClient      // 你的 123 云盘 API 客户端
 	rest     *rest.Client      // *** 新增此行 ***
 	tokenMgr *tokenmanager.Manager // 你的 token 管理器实例
@@ -246,8 +257,16 @@ func NewFs(ctx context.Context, name, root string, m configmap.Mapper) (fs.Fs, e
 		apiBaseURL:      apiBaseURL,
 		opt:             *opt,
 		ci:              fs.GetConfig(ctx),
-		pacer:           fs.NewPacer(ctx, pacer.NewDefault(pacer.MinSleep(minSleep), pacer.MaxSleep(maxSleep), pacer.DecayConstant(decayConstant))),
-		//client:          apiClient,
+		pacer_about:     fs.NewPacer(ctx, pacer.NewDefault(pacer.MinSleep(minSleep1), pacer.MaxSleep(maxSleep1), pacer.DecayConstant(decayConstant))),
+		pacer_list:      fs.NewPacer(ctx, pacer.NewDefault(pacer.MinSleep(minSleep3), pacer.MaxSleep(maxSleep3), pacer.DecayConstant(decayConstant))),
+		pacer_trash:     fs.NewPacer(ctx, pacer.NewDefault(pacer.MinSleep(minSleep1), pacer.MaxSleep(maxSleep1), pacer.DecayConstant(decayConstant))),
+		pacer_move:      fs.NewPacer(ctx, pacer.NewDefault(pacer.MinSleep(minSleep1), pacer.MaxSleep(maxSleep1), pacer.DecayConstant(decayConstant))),
+		pacer_rename:    fs.NewPacer(ctx, pacer.NewDefault(pacer.MinSleep(minSleep3), pacer.MaxSleep(maxSleep3), pacer.DecayConstant(decayConstant))),
+		pacer_mkdir:     fs.NewPacer(ctx, pacer.NewDefault(pacer.MinSleep(minSleep2), pacer.MaxSleep(maxSleep2), pacer.DecayConstant(decayConstant))),
+		pacer_create:    fs.NewPacer(ctx, pacer.NewDefault(pacer.MinSleep(minSleep2), pacer.MaxSleep(maxSleep2), pacer.DecayConstant(decayConstant))),
+		pacer_complete:  fs.NewPacer(ctx, pacer.NewDefault(pacer.MinSleep(minSleep2), pacer.MaxSleep(maxSleep2), pacer.DecayConstant(decayConstant))),
+		pacer_transfer:  fs.NewPacer(ctx, pacer.NewDefault(pacer.MinSleep(minSleepx), pacer.MaxSleep(maxSleepx), pacer.DecayConstant(decayConstant))),
+		//client:        apiClient,
 		tokenMgr:        tokenMgr,
 		pathCache:       make(map[string]*cacheEntry),
 		cacheTTL:        dir_cacheTTL, // 设置目录对应id的缓存时间
@@ -256,7 +275,7 @@ func NewFs(ctx context.Context, name, root string, m configmap.Mapper) (fs.Fs, e
 		linkCache: make(map[int64]cachedURL),
 	}
 	// 根目录的缓存永不过期，或者给一个很长的过期时间
-	f.pathCache[""] = &cacheEntry{id: 0, expiresAt: time.Now().AddDate(1, 0, 0)}
+	f.pathCache[""] = &cacheEntry{id: 0, expiresAt: time.Now().AddDate(3650, 0, 0)}
 	
 	// 将下载链接ttl默认值设置得合理一些，比如1小时
 	if f.opt.LinkTTL <= 0 {
@@ -377,7 +396,7 @@ func (f *Fs) listDir(ctx context.Context, parentID int64, parentPath string, las
 	// 发送请求
 	var respData FileListV2Response
 	
-	err := f.pacer.Call(func() (bool, error) {
+	err := f.pacer_list.Call(func() (bool, error) {
 		opts := f.newMetaOpts(ctx)
 		opts.Method = "GET"
 		opts.Path = "/api/v2/file/list"
@@ -559,7 +578,7 @@ func (f *Fs) About(ctx context.Context) (*fs.Usage, error) {
 
 	// 发送请求
 	var respData UserInfoResponse
-	err := f.pacer.Call(func() (bool, error) {
+	err := f.pacer_about.Call(func() (bool, error) {
 		opts := f.newMetaOpts(ctx)
 		opts.Method = "GET"
 		opts.Path = "/api/v1/user/info"
@@ -682,7 +701,7 @@ func (f *Fs) Mkdir(ctx context.Context, dir string) error {
 	// 发送请求
 	var respData MkdirResponse
 	
-	err = f.pacer.Call(func() (bool, error) {
+	err = f.pacer_mkdir.Call(func() (bool, error) {
 		opts := f.newMetaOpts(ctx)
 		opts.Method = "POST"
 		opts.Path = "/upload/v1/file/mkdir"
@@ -731,7 +750,7 @@ func (f *Fs) getUploadDomain(ctx context.Context) (string, error) {
 	// 发送请求
 	var respData UploadDomainResponse
 	
-	err := f.pacer.Call(func() (bool, error) {
+	err := f.pacer_about.Call(func() (bool, error) {
 		opts := f.newMetaOpts(ctx)
 		opts.Method = "GET"
 		opts.Path = "/upload/v2/file/domain"
@@ -794,7 +813,7 @@ func (f *Fs) putSingle(ctx context.Context, in io.Reader, src fs.ObjectInfo, dup
 	var finalFileInfo *FileInfoV2 // 用于在pacer循环外接收成功后的结果
 
 	// --- 步骤 2: 将所有请求逻辑放入 pacer 循环 ---
-	err = f.pacer.Call(func() (bool, error) {
+	err = f.pacer_transfer.Call(func() (bool, error) {
 		// --- 重试会从这里重新开始 ---
 
 		// 1. 在每次循环内，重新获取最新的认证信息
@@ -924,7 +943,7 @@ func (f *Fs) putChunked(ctx context.Context, in io.Reader, src fs.ObjectInfo, du
 
 	var createRespData ChunkedUploadCreateResponse
 
-	err = f.pacer.Call(func() (bool, error) {
+	err = f.pacer_create.Call(func() (bool, error) {
 		opts := f.newMetaOpts(ctx) // 假设你有这个辅助函数来创建元数据请求的opts
 		opts.Method = "POST"
 		opts.Path = "/upload/v2/file/create"
@@ -968,7 +987,7 @@ func (f *Fs) putChunked(ctx context.Context, in io.Reader, src fs.ObjectInfo, du
 
 
 	finalFileID := int64(-1)
-	err = f.pacer.Call(func() (bool, error) {
+	err = f.pacer_complete.Call(func() (bool, error) {
 	// --- 步骤 3: 发送完成请求，确认文件合并 ---
 		completeReqBody := ChunkedUploadCompleteRequest{PreuploadID: preuploadID}
 		completeOpts := f.newMetaOpts(ctx)
@@ -1130,7 +1149,7 @@ func (f *Fs) uploadChunk(ctx context.Context, url string, preuploadID string, fi
 	fs.Debugf(nil, "开始上传分片 #%d, 大小: %s, MD5: %s", job.number, fs.SizeSuffix(int64(len(job.data))), sliceMD5)
 
 	// 将所有请求准备和执行的逻辑都放在pacer循环内，以确保重试的健壮性
-	err := f.pacer.Call(func() (bool, error) {
+	err := f.pacer_transfer.Call(func() (bool, error) {
 		// --- 重试从这里重新开始 ---
 
 		// 1. 在每次循环内，重新获取最新的认证信息
@@ -1238,7 +1257,7 @@ func (f *Fs) trashItems(ctx context.Context, fileIDs []int64) error {
 
 		// 发送请求
 		var respData CommonResponse
-		err := f.pacer.Call(func() (bool, error) {
+		err := f.pacer_trash.Call(func() (bool, error) {
 			opts := f.newMetaOpts(ctx)
 			opts.Method = "POST"
 			opts.Path = "/api/v1/file/trash"
@@ -1352,7 +1371,7 @@ func (f *Fs) internalMove(ctx context.Context, itemID int64, dstParentPath strin
 	// 发送请求
 	var respData CommonResponse
 	
-	err = f.pacer.Call(func() (bool, error) {
+	err = f.pacer_move.Call(func() (bool, error) {
 		opts := f.newMetaOpts(ctx)
 		opts.Method = "POST"
 		opts.Path = "/api/v1/file/move"
@@ -1381,7 +1400,7 @@ func (f *Fs) internalMove(ctx context.Context, itemID int64, dstParentPath strin
 //	
 //	var respData CommonResponse
 //
-//	err := f.pacer.Call(func() (bool, error) {
+//	err := f.pacer_rename.Call(func() (bool, error) {
 //		// 构建请求
 //		opts := f.newMetaOpts(ctx)
 //		opts.Method = "POST"
@@ -1419,7 +1438,7 @@ func (f *Fs) internalRename(ctx context.Context, itemID int64, newName string) e
 	// 响应体结构保持不变
 	var respData CommonResponse
 
-	err := f.pacer.Call(func() (bool, error) {
+	err := f.pacer_rename.Call(func() (bool, error) {
 		// 构建请求
 		opts := f.newMetaOpts(ctx)
 		opts.Method = "POST"
@@ -1582,7 +1601,7 @@ func (f *Fs) open(ctx context.Context, o *Object, options ...fs.OpenOption) (io.
 			var infoResp DownloadInfoResponse
 			// 注意：这里我们仍然在锁内部执行API调用。
 			// 这是为了防止“惊群效应”，即多个goroutine同时请求同一个文件的链接。
-			err := f.pacer.Call(func() (bool, error) {
+			err := f.pacer_transfer.Call(func() (bool, error) {
 				opts := f.newMetaOpts(ctx)
 				opts.Method = "GET"
 				opts.Path = "/api/v1/file/download_info"
@@ -1641,7 +1660,7 @@ func (f *Fs) open(ctx context.Context, o *Object, options ...fs.OpenOption) (io.
 	downloadOpts.Method = "GET"
 	
 	var downloadResp *http.Response
-	err = f.pacer.Call(func() (bool, error) {
+	err = f.pacer_transfer.Call(func() (bool, error) {
 		var doErr error
 		downloadResp, doErr = f.rest.Call(ctx, &downloadOpts)
 		
