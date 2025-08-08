@@ -37,7 +37,9 @@ import (
 	"github.com/rclone/rclone/backend/yunpan123/tokenmanager"
 )
 
+var apiserverLocation *time.Location
 const (
+	apiserverLocation                           = time.FixedZone("CST", 8*60*60)
 	singleUploadCutoff                          = 16 * 1024 * 1024
 	duplicatePolicyRename                       = 1 //  1 代表重命名
 	duplicatePolicyOverwrite                    = 2
@@ -87,8 +89,8 @@ func newObject(ctx context.Context, f *Fs, remote string, info *FileInfoV2) (*Ob
 		o.hash = info.Etag
 
 		// *** 关键：解析自定义时间格式 ***
-		// 时间字符串拼接，加上时区信息
-		parsedTime, err := time.Parse(time.RFC3339, info.UpdateAt + "+08:00")
+		// 时间字符串解析时带上时区信息
+		parsedTime, err := time.ParseInLocation("2006-01-02 15:04:05", info.UpdateAt, apiserverLocation)
 		if err != nil {
 			fs.Errorf(o, "Failed to parse mod time '%s': %v", info.UpdateAt, err)
 			o.modTime = time.Now() // 解析失败时给一个默认值
@@ -510,8 +512,8 @@ func (f *Fs) List(ctx context.Context, dir string) (entries fs.DirEntries, err e
 			remotePath := path.Join(dir, fileInfo.Filename)
 
 			if fileInfo.Type == 1 { // 这是一个目录
-				// *** 核心修改：解析目录的 updateAt 时间, 加上时区信息再解析 ***
-				modTime, err := time.Parse(time.RFC3339, fileInfo.UpdateAt + "+08:00")
+				// *** 核心修改：解析目录的 updateAt 时间, 解析时戴上时区信息 ***
+				modTime, err := time.ParseInLocation("2006-01-02 15:04:05", fileInfo.UpdateAt, apiserverLocation)
 				if err != nil {
 					fs.Errorf(f, "Failed to parse directory mod time '%s' for %s: %v", fileInfo.UpdateAt, remotePath, err)
 					modTime = time.Now() // 解析失败时给一个默认值
