@@ -192,7 +192,7 @@ type Fs struct {
 	
 	uploadDomain          string
 	uploadDomainExpiresAt time.Time // 上传域名的过期时间
-	uploadDomainMu        sync.Mutex  // 保护上传域名的读写
+	uploadDomainMu        sync.RWMutex  // 保护上传域名的读写
 }
 
 // cacheEntry 存储目录ID和其过期时间
