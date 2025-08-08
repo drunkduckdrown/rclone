@@ -37,9 +37,8 @@ import (
 	"github.com/rclone/rclone/backend/yunpan123/tokenmanager"
 )
 
-var apiserverLocation *time.Location
+var apiserverLocation = time.FixedZone("CST", 8*60*60)
 const (
-	apiserverLocation                           = time.FixedZone("CST", 8*60*60)
 	singleUploadCutoff                          = 16 * 1024 * 1024
 	duplicatePolicyRename                       = 1 //  1 代表重命名
 	duplicatePolicyOverwrite                    = 2
