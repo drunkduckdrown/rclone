@@ -58,7 +58,7 @@ func (m *Manager) callCloudFunction(endpoint string) (*TokenResponse, error) {
 	resp, err := m.httpClient.Do(req)
 	
 	if err != nil {
-		resp, err := m.httpClient.Do(req) //给一次重试机会
+		resp, err = m.httpClient.Do(req) //给一次重试机会
 	}
 	
 	if err != nil {
