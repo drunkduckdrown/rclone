@@ -736,17 +736,29 @@ func (f *Fs) Mkdir(ctx context.Context, dir string) error {
 
 // getUploadDomain 获取并缓存上传域名，并设置10分钟的TTL
 func (f *Fs) getUploadDomain(ctx context.Context) (string, error) {
-	f.uploadDomainMu.Lock()
+	var domain string
+	// 第一次检查：使用读锁快速检查缓存
+	f.uploadDomainMu.RLock()
 	if f.uploadDomain != "" && time.Now().Before(f.uploadDomainExpiresAt) {
-		f.uploadDomainMu.Unlock()
-		return f.uploadDomain, nil
+		domain = f.uploadDomain
+		f.uploadDomainMu.RUnlock()
+		fs.Debugf(f, "Using cached upload domain: %s", domain)
+		return domain, nil
 	}
-	f.uploadDomainMu.Unlock()
-
-	fs.Debugf(f, "Upload domain cache is empty or expired, fetching a new one...")
-	
-
-
+	f.uploadDomainMu.RUnlock() // 缓存未命中或过期，释放读锁
+	// 缓存未命中或过期，需要获取写锁进行更新
+	fs.Debugf(f, "Upload domain cache is empty or expired, attempting to fetch a new one...")
+	f.uploadDomainMu.Lock() // 获取写锁
+	defer f.uploadDomainMu.Unlock() // 确保函数退出时释放写锁
+	// 双重检查锁定：在获取写锁后再次检查缓存
+	// 避免在等待写锁期间，其他 goroutine 已经更新了缓存
+	if f.uploadDomain != "" && time.Now().Before(f.uploadDomainExpiresAt) {
+		domain = f.uploadDomain
+		fs.Debugf(f, "Using cached upload domain (acquired after waiting for lock): %s", domain)
+		return domain, nil
+	}
+	// 确认需要当前 goroutine 发起 API 调用
+	fs.Debugf(f, "Confirmed cache miss, fetching new upload domain...")
 	// 发送请求
 	var respData UploadDomainResponse
 	
@@ -759,19 +771,19 @@ func (f *Fs) getUploadDomain(ctx context.Context) (string, error) {
 	})
 	
 	if err != nil {
+		// 错误发生时，defer 会自动解锁
 		return "", fmt.Errorf("failed to call upload domain api: %w", err)
 	}
 	
-
 	if len(respData.Data) == 0 {
+		// 错误发生时，defer 会自动解锁
 		return "", errors.New("upload domain api returned no domains")
 	}
-
+	// 成功获取，更新缓存
 	uploadDomain := respData.Data[0]
-	f.uploadDomainMu.Lock()
 	f.uploadDomain = uploadDomain
-	f.uploadDomainExpiresAt = time.Now().Add(10 * time.Minute)
-	f.uploadDomainMu.Unlock()
+	f.uploadDomainExpiresAt = time.Now().Add(10 * time.Minute) // 缓存10分钟
+	
 	fs.Debugf(f, "Fetched and cached new upload domain: %s", uploadDomain)
 	return uploadDomain, nil
 }
