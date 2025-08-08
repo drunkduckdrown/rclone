@@ -512,7 +512,7 @@ func (f *Fs) List(ctx context.Context, dir string) (entries fs.DirEntries, err e
 			remotePath := path.Join(dir, fileInfo.Filename)
 
 			if fileInfo.Type == 1 { // 这是一个目录
-				// *** 核心修改：解析目录的 updateAt 时间, 解析时戴上时区信息 ***
+				// *** 核心修改：解析目录的 updateAt 时间, 解析时带上时区信息 ***
 				modTime, err := time.ParseInLocation("2006-01-02 15:04:05", fileInfo.UpdateAt, apiserverLocation)
 				if err != nil {
 					fs.Errorf(f, "Failed to parse directory mod time '%s' for %s: %v", fileInfo.UpdateAt, remotePath, err)
