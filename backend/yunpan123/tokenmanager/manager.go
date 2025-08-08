@@ -36,7 +36,7 @@ func NewManager(cloudFunctionURL, cloudFunctionAuthToken string) *Manager { // �
 		cloudFunctionURL:    cloudFunctionURL,
 		cloudFunctionAuthToken: cloudFunctionAuthToken, // 新名称
 		httpClient: &http.Client{
-			Timeout: 10 * time.Second, // 调用云函数超时时间
+			Timeout: 20 * time.Second, // 调用云函数超时时间
 		},
 		stopChan: make(chan struct{}),
 	}
@@ -56,6 +56,11 @@ func (m *Manager) callCloudFunction(endpoint string) (*TokenResponse, error) {
 	req.Header.Set("Authorization", "Bearer "+m.cloudFunctionAuthToken)
 
 	resp, err := m.httpClient.Do(req)
+	
+	if err != nil {
+		resp, err := m.httpClient.Do(req) //给一次重试机会
+	}
+	
 	if err != nil {
 		return nil, fmt.Errorf("failed to call cloud function %s: %w", endpoint, err)
 	}
