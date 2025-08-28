@@ -169,6 +169,7 @@ type Fs struct {
 	name     string            // rclone remote 的名称 (例如 "my123pan")
 	root     string            // 用户配置的根路径 (例如 "/MyFiles")
 	apiBaseURL string
+	downloadValidationURL string // 新增：下载验证URL
 	opt      Options           // 配置
 	ci       *fs.ConfigInfo // global config
 	pacer_about    *fs.Pacer      // rclone 提供的限速器，用于控制 API 请求频率
@@ -221,6 +222,7 @@ func NewFs(ctx context.Context, name, root string, m configmap.Mapper) (fs.Fs, e
 	cloudFunctionURL := opt.Cloud_function_url
 	cloudFunctionAuthToken := opt.Cloud_function_auth_token // 新名称
 	apiBaseURL := opt.Api_base_url
+	downloadValidationURL := opt.Download_validation_url
 
 	// 检查必要参数是否已提供
 	if cloudFunctionURL == "" {
@@ -257,6 +259,7 @@ func NewFs(ctx context.Context, name, root string, m configmap.Mapper) (fs.Fs, e
 		name:            name,
 		root:            root,
 		apiBaseURL:      apiBaseURL,
+		downloadValidationURL: downloadValidationURL,
 		opt:             *opt,
 		ci:              fs.GetConfig(ctx),
 		pacer_about:     fs.NewPacer(ctx, pacer.NewDefault(pacer.MinSleep(minSleep1), pacer.MaxSleep(maxSleep1), pacer.DecayConstant(decayConstant))),
@@ -340,6 +343,13 @@ func init() {
 				Required: true,
 				Advanced: false,
 				Default:  "https://open-api.123pan.com", // 假设的默认值，请根据实际情况修改
+		},{
+		// 下载验证URL
+				Name:     "Download_validation_url",
+				Help:     "URL for validating download links (e.g., https://web-pro2.123952.com)",
+				Required: false,
+				Advanced: true,
+				Default:  "https://web-pro2.123952.com",
 		}},
 	})
 }
@@ -349,6 +359,7 @@ type Options struct {
 	Cloud_function_url              string       `config:"Cloud_function_url"`
 	Cloud_function_auth_token       string       `config:"Cloud_function_auth_token"`
 	Api_base_url                    string       `config:"Api_base_url"`
+	Download_validation_url         string       `config:"Download_validation_url"`
 	LinkTTL                         fs.Duration  `config:"link_ttl" config_help:"Time that download links are considered valid for.\nUseful to set this to slightly less than the link expiry time of your backend."`
 }
 
@@ -1659,7 +1670,7 @@ func (f *Fs) open(ctx context.Context, o *Object, options ...fs.OpenOption) (io.
 
 	// --- 新增步骤: 验证下载 URL (带重试) ---
 	encodedURL := base64.StdEncoding.EncodeToString([]byte(downloadURL))
-	validationURL := fmt.Sprintf("https://web-pro2.123952.com/download-v2/?params=%s&is_s3=0", encodedURL)
+	validationURL := fmt.Sprintf("%s/download-v2/?params=%s&is_s3=0", f.downloadValidationURL, encodedURL)
 	fs.Debugf(o, "Validating download URL with: %s", validationURL)
 
 	var lastErr error
