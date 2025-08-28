@@ -1689,7 +1689,7 @@ func (f *Fs) open(ctx context.Context, o *Object, options ...fs.OpenOption) (io.
 	}
 
 	if !validationSuccess {
-		return nil, lastErr
+		fs.Debugf(o, "Download URL validation failed after 3 attempts, but proceeding anyway. Last error: %v", lastErr)
 	}
 
 
