@@ -3,6 +3,7 @@ package yunpan123
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"fmt"
 	"io"
 	"time"
@@ -1615,7 +1616,7 @@ func (f *Fs) open(ctx context.Context, o *Object, options ...fs.OpenOption) (io.
 			// 注意：这里我们仍然在锁内部执行API调用。
 			// 这是为了防止“惊群效应”，即多个goroutine同时请求同一个文件的链接。
 			err := f.pacer_transfer.Call(func() (bool, error) {
-				opts := f.newMetaOpts(ctx)
+				opts := f.newAndroidMetaOpts(ctx)
 				opts.Method = "GET"
 				opts.Path = "/api/v1/file/download_info"
 				opts.Parameters = params
@@ -1655,6 +1656,42 @@ func (f *Fs) open(ctx context.Context, o *Object, options ...fs.OpenOption) (io.
 	}
 	
 	fs.Debugf(o, "Got download URL: %s", downloadURL)
+
+	// --- 新增步骤: 验证下载 URL (带重试) ---
+	encodedURL := base64.StdEncoding.EncodeToString([]byte(downloadURL))
+	validationURL := fmt.Sprintf("https://web-pro2.123952.com/download-v2/?params=%s&is_s3=0", encodedURL)
+	fs.Debugf(o, "Validating download URL with: %s", validationURL)
+
+	var lastErr error
+	validationSuccess := false
+	for i := 0; i < 3; i++ {
+		if i > 0 {
+			fs.Debugf(o, "Retrying download URL validation, attempt %d/3", i+1)
+			time.Sleep(1 * time.Second)
+		}
+
+		valResp, valErr := http.Get(validationURL)
+		if valErr != nil {
+			lastErr = fmt.Errorf("failed to validate download URL on attempt %d: %w", i+1, valErr)
+			continue
+		}
+
+		if valResp.StatusCode == http.StatusOK {
+			fs.Debugf(o, "Download URL validation successful on attempt %d.", i+1)
+			validationSuccess = true
+			valResp.Body.Close()
+			break
+		}
+
+		bodyBytes, _ := io.ReadAll(valResp.Body)
+		valResp.Body.Close()
+		lastErr = fmt.Errorf("download URL validation failed on attempt %d with status %s: %s", i+1, valResp.Status, string(bodyBytes))
+	}
+
+	if !validationSuccess {
+		return nil, lastErr
+	}
+
 
 	// --- 步骤 2: 向下载 URL 发起请求 ---
 	downloadOpts := f.newDownloadOpts(options...)
@@ -1716,6 +1753,17 @@ func (f *Fs) newMetaOpts(ctx context.Context) rest.Opts {
 		ExtraHeaders: map[string]string{
 			"Authorization": "Bearer " + f.tokenMgr.GetToken(),
 			"Platform":      "open_platform",
+		},
+	}
+}
+
+// newAndroidMetaOpts 返回用于获取下载链接的 rest.Opts，平台为 "android"
+func (f *Fs) newAndroidMetaOpts(ctx context.Context) rest.Opts {
+	return rest.Opts{
+		RootURL:         f.apiBaseURL,
+		ExtraHeaders: map[string]string{
+			"Authorization": "Bearer " + f.tokenMgr.GetToken(),
+			"Platform":      "android",
 		},
 	}
 }
